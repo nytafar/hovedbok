@@ -1,0 +1,36 @@
+{
+  "transactions": [
+    {
+      "entry_reference": "2026090100001",
+      "transaction_amount": { "currency": "NOK", "amount": "12500.00" },
+      "debtor": { "name": "Kunde AS" },
+      "debtor_account": { "iban": "NO4312345678903" },
+      "credit_debit_indicator": "CRDT",
+      "status": "BOOK",
+      "booking_date": "2026-09-01",
+      "value_date": "2026-09-01",
+      "transaction_date": "2026-08-31",
+      "balance_after_transaction": { "currency": "NOK", "amount": "62500.00" },
+      "reference_number": "0012345678906",
+      "reference_number_schema": "NORF",
+      "remittance_information": ["KID 0012345678906"],
+      "bank_transaction_code": { "description": "Innbetaling", "code": "230" },
+      "transaction_id": "tx-a1"
+    },
+    {
+      "entry_reference": "2026090300002",
+      "transaction_amount": { "currency": "NOK", "amount": "4990.00" },
+      "creditor": { "name": "Leverandør AS" },
+      "creditor_account": { "iban": "NO5598765432109" },
+      "credit_debit_indicator": "DBIT",
+      "status": "BOOK",
+      "booking_date": "2026-09-03",
+      "value_date": "2026-09-03",
+      "balance_after_transaction": { "currency": "NOK", "amount": "57510.00" },
+      "remittance_information": ["Faktura 1042"],
+      "bank_transaction_code": { "description": "Utbetaling", "code": "211" },
+      "transaction_id": "tx-a2"
+    }
+  ],
+  "continuation_key": "page-2"
+}

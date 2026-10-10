@@ -1,0 +1,32 @@
+{
+  "transactions": [
+    {
+      "entry_reference": null,
+      "transaction_amount": { "currency": "NOK", "amount": "75.00" },
+      "creditor": { "name": "Mock ASPSP" },
+      "credit_debit_indicator": "DBIT",
+      "status": "BOOK",
+      "booking_date": "2026-09-30",
+      "value_date": "2026-09-30",
+      "balance_after_transaction": { "currency": "NOK", "amount": "57435.00" },
+      "remittance_information": ["Gebyr nettbank bedrift"],
+      "bank_transaction_code": { "description": "Gebyr", "code": "315" },
+      "transaction_id": "tx-a3"
+    },
+    {
+      "entry_reference": "2026100200004",
+      "transaction_amount": { "currency": "NOK", "amount": "1250.50" },
+      "creditor": { "name": "Telenor Norge AS" },
+      "credit_debit_indicator": "DBIT",
+      "status": "BOOK",
+      "booking_date": "2026-10-02",
+      "value_date": "2026-10-02",
+      "balance_after_transaction": { "currency": "NOK", "amount": "56184.50" },
+      "reference_number": "9870000000011",
+      "reference_number_schema": "NORF",
+      "remittance_information": [],
+      "transaction_id": "tx-a4"
+    }
+  ],
+  "continuation_key": null
+}

@@ -1,0 +1,29 @@
+{
+  "session_id": "5b1d3a7e-2f4c-4a8e-9c1d-0e6f7a8b9c0d",
+  "accounts": [
+    {
+      "account_id": { "iban": "NO9386011117947" },
+      "all_account_ids": [
+        { "identification": "NO9386011117947", "scheme_name": "IBAN" },
+        { "identification": "86011117947", "scheme_name": "BBAN" }
+      ],
+      "account_servicer": { "bic_fi": "DNBANOKK", "name": "Mock ASPSP" },
+      "name": "Test AS",
+      "details": "Driftskonto",
+      "usage": "ORGA",
+      "cash_account_type": "CACC",
+      "product": "Bedriftskonto",
+      "currency": "NOK",
+      "psu_status": "Account Holder",
+      "uid": "07cc67f4-45d6-494b-adac-09b5cbc7e2b5",
+      "identification_hash": "WwpbCiJhY2NvdW50IiwKImFjY291bnRfaWQiLAoiaWJhbiIKXQpd.mockNO9386011117947hash=",
+      "identification_hashes": [
+        "WwpbCiJhY2NvdW50IiwKImFjY291bnRfaWQiLAoiaWJhbiIKXQpd.mockNO9386011117947hash=",
+        "WwpbCiJhc3BzcF9uYW1lIgpdLApbCiJhc3BzcF9jb3VudHJ5IgpdLApb.mock86011117947bbanhash="
+      ]
+    }
+  ],
+  "aspsp": { "name": "Mock ASPSP", "country": "NO" },
+  "psu_type": "business",
+  "access": { "valid_until": "2027-04-07T00:00:00Z" }
+}
