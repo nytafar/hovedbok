@@ -50,7 +50,10 @@ revenue/cost/asset line, nothing on the 27xx line. `vat_summary` derives the
 VAT from base × rate; `vat_control` shows where the booked 27xx movement
 differs. In a voucher that touches a VAT account every P&L line must carry a
 code (`"0"` when it is genuinely outside VAT). The database refuses the other
-shapes.
+shapes. `mva_term` rolls `vat_summary` up to the entity's VAT term
+(`entity.vat_term`, bimonthly by default), signed as the MVA-melding reads;
+`src/mva.ts` builds the melding XML from it (whole kroner, per Skatteetaten's
+XSD).
 
 ## Layout
 
