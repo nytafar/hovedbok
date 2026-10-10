@@ -29,6 +29,11 @@ import { join } from "node:path";
 
 export const YEAR = 2026;
 export const ENTITY_NAME = "E2E Test AS";
+/** SAF-T Header/Company for the test entity (#15): what GET /saf-t needs to serve a valid file. */
+export const COMPANY_PROFILE = {
+  address: { street: "Testveien", number: "1", city: "Oslo", postalCode: "0150", country: "NO" },
+  contact: { firstName: "E2E", lastName: "Testesen", telephone: "+47 22 00 00 00", email: "e2e@hovedbok.invalid" },
+};
 
 const MVA_XSD = join(import.meta.dir, "fixtures", "mva-meldingen",
   "no.skatteetaten.fastsetting.avgift.mva.skattemeldingformerverdiavgift.v1.0.xsd");
@@ -160,7 +165,7 @@ export interface Facts {
   ledger1920?: number;
   mva: Record<number, { total: number; lines: unknown[] }>;
   saftEntries?: number;
-  saftXsd?: { valid: boolean; validWithContact?: boolean };
+  saftXsd?: { valid: boolean };
 }
 
 export const SAFT_XSD_STEP = "SAF-T valid against the v1.30 XSD";
@@ -355,8 +360,13 @@ export async function runFlow(o: FlowOptions): Promise<FlowReport> {
 
   // --- 1. the entity ----------------------------------------------------------
   await step(`bootstrap entity ${E}`, async () => {
-    const r = await h.ok("POST", "/entities", { body: { orgnr: E, name: ENTITY_NAME, vat_registered: true, vat_term: "bimonthly", year: YEAR } });
+    const r = await h.ok("POST", "/entities", {
+      body: { orgnr: E, name: ENTITY_NAME, vat_registered: true, vat_term: "bimonthly", year: YEAR, company_profile: COMPANY_PROFILE },
+    });
     check(r.json.entity === E && r.json.year === YEAR, `unexpected answer ${r.text}`);
+    // stored on creation, or filled on a re-run of an entity that had none
+    check(Bun.deepEquals(r.json.company_profile, COMPANY_PROFILE),
+      `company profile: expected ${JSON.stringify(COMPANY_PROFILE)}, got ${JSON.stringify(r.json.company_profile)}`);
     await h.ok("PUT", "/parties", { body: { entity: E, id: "K1", name: "Kunde AS", customer: true } });
     return r.json.created ? `created, ${r.json.accounts_added} accounts` : "exists (re-run)";
   }, { critical: true });
@@ -508,15 +518,8 @@ export async function runFlow(o: FlowOptions): Promise<FlowReport> {
     if (!o.xmllint) throw new Skip("xmllint not available");
     const err = await xsdErrors(o.xmllint, SAFT_XSD, saft);
     facts.saftXsd = { valid: err === null };
-    if (err === null) return "valid as served";
-    // Diagnose: Header/Company/Contact is mandatory and GET /saf-t has no
-    // company profile to fill it from. Is that the only thing wrong?
-    const withContact = saft.replace("<TaxRegistration>",
-      "<Contact><ContactPerson><FirstName>E2E</FirstName><LastName>Placeholder</LastName></ContactPerson></Contact><TaxRegistration>");
-    facts.saftXsd.validWithContact = (await xsdErrors(o.xmllint, SAFT_XSD, withContact)) === null;
-    throw new Check(`XSD: ${err.split("\n")[0]}${facts.saftXsd.validWithContact
-      ? " -- the only defect: with a Header/Company/Contact spliced in, the file validates"
-      : ""}`);
+    check(err === null, `XSD: ${err}`);
+    return "valid as served";
   });
 
   return { ok: steps.every((s) => s.status === "pass" || s.status === "skip"), steps, facts };

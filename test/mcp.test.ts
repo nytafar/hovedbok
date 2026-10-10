@@ -141,7 +141,13 @@ describe("the agent flow over MCP", () => {
   test("bootstrap and reference data", async () => {
     const b = await call("bootstrap_entity", { orgnr: E, name: "Demo AS", vat_registered: true, year: Y });
     expect(b.isError).toBe(false);
-    expect(b.json).toEqual({ entity: E, created: true, accounts_added: expect.any(Number), year: Y });
+    expect(b.json).toEqual({ entity: E, created: true, accounts_added: expect.any(Number), year: Y, company_profile: {} });
+    const profile = {
+      address: { city: "Oslo", postalCode: "0155" },
+      contact: { firstName: "Kari", lastName: "Nordmann", telephone: "22000000" },
+    };
+    const cp = await call("set_company_profile", { entity: E, company_profile: profile });
+    expect(cp.json).toEqual({ entity: E, company_profile: profile });
     const p = await call("upsert_party", { entity: E, id: "K1", name: "Kunde AS", customer: true });
     expect(p.json).toEqual({ entity: E, id: "K1", created: true });
   });

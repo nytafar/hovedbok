@@ -3,8 +3,8 @@
 // route table, the query parameters and these paths are the same set.
 //
 // The command bodies mirror the jsonb contracts of the SQL functions (the
-// header comments in db/migrations: 0006/0026 post_voucher, 0012
-// bootstrap_entity, 0015/0019 close_fiscal_year, 0016/0020/0028 upsert_*).
+// header comments in db/migrations: 0006/0026 post_voucher, 0012/0032
+// bootstrap_entity, 0032 set_company_profile, 0015/0019 close_fiscal_year, 0016/0020/0028 upsert_*).
 // operationId is the SQL function or view each route is 1:1 with.
 //
 // Money: signed integer øre (+debit / −credit) everywhere. Row amounts are
@@ -112,11 +112,42 @@ const schemas: Record<string, Schema> = {
     vat_registered: bool("Default false."),
     vat_term: { type: "string", enum: ["monthly", "bimonthly", "yearly"], description: "Default bimonthly." },
     year: int("Fiscal year to open; default the current year."),
-  }, ["orgnr", "name"]),
+    company_profile: ref("CompanyProfile"),
+  }, ["orgnr", "name"], {
+    description: "company_profile is stored on a new entity, or on an existing one that has none ({}); a re-run never " +
+      "overwrites a stored profile (set_company_profile replaces it).",
+  }),
   BootstrapEntityResult: obj({
     entity: str(), created: bool("false when the entity existed (idempotent, non-destructive)."),
     accounts_added: int(), year: int(),
-  }, ["entity", "created", "accounts_added", "year"]),
+    company_profile: ref("CompanyProfile"),
+  }, ["entity", "created", "accounts_added", "year", "company_profile"]),
+
+  CompanyProfile: obj({
+    address: obj({
+      street: str("Max 256."), number: str("House number; max 70."), city: str("Max 256."),
+      postalCode: str("Max 70."), country: { type: "string", pattern: "^[A-Z]{2}$", description: "ISO 3166-1 alpha-2; default NO." },
+    }, [], { additionalProperties: false }),
+    contact: obj({
+      firstName: str("Max 35."), lastName: str("Max 70."), telephone: str("Max 18."), email: str("Max 70."),
+    }, ["firstName", "lastName"], { additionalProperties: false }),
+    bankAccounts: {
+      type: "array",
+      description: "Default: the entity's bank accounts from Enable Banking (bank_account).",
+      items: obj({
+        number: str("Account number (BBAN); max 35."),
+        ledgerAccount: { type: "string", pattern: "^\\d{4}$", description: "The 19xx ledger account it feeds." },
+        currency: { type: "string", pattern: "^[A-Z]{3}$", description: "Default NOK." },
+      }, ["number", "ledgerAccount"], { additionalProperties: false }),
+    },
+  }, [], {
+    additionalProperties: false,
+    description: "SAF-T Header/Company data ({} = none). Every key is optional when stored; GET /saf-t needs " +
+      "contact.firstName, lastName, telephone and address.city, postalCode. Non-empty strings only.",
+  }),
+  SetCompanyProfile: obj({ entity: str(), company_profile: ref("CompanyProfile") }, ["entity", "company_profile"],
+    { description: "Replaces the stored profile as a whole: an absent key is removed; {} clears it." }),
+  SetCompanyProfileResult: obj({ entity: str(), company_profile: ref("CompanyProfile") }, ["entity", "company_profile"]),
 
   UpsertAccount: obj({
     entity: str(),
@@ -368,6 +399,10 @@ const paths: Record<string, Record<string, unknown>> = {
   "/entities": {
     post: command("bootstrap_entity", "Create an entity with the standard chart and open a fiscal year (idempotent).",
       ref("BootstrapEntity"), ref("BootstrapEntityResult")),
+  },
+  "/company-profile": {
+    put: command("set_company_profile", "Replace the entity's company profile (SAF-T Header/Company: address, contact, bank accounts).",
+      ref("SetCompanyProfile"), ref("SetCompanyProfileResult")),
   },
   "/accounts": {
     get: read("account", "The entity's chart of accounts.", "AccountRow", [q("code", { type: "string" }, "Account code.")]),

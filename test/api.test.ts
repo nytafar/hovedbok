@@ -9,7 +9,7 @@ import { SQL } from "bun";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createApi } from "../src/api/app";
+import { createApi, pgText } from "../src/api/app";
 import { databaseUrl, dropTestDb, freshDb, testDbName } from "./helper";
 
 const E = "999888777";
@@ -89,6 +89,11 @@ async function call(
 const get = (path: string, token?: string | null) => call("GET", path, { token });
 const post = (path: string, body: unknown, token?: string | null) => call("POST", path, { body, token });
 
+const PROFILE = {
+  address: { street: "Storgata", number: "1", city: "Oslo", postalCode: "0155", country: "NO" },
+  contact: { firstName: "Kari", lastName: "Nordmann", telephone: "+47 22 00 00 00", email: "kari@demo.no" },
+};
+
 const sale = {
   entity: E, posting_date: "2026-01-15", description: "Salg K1", idempotency_key: "sale-1",
   lines: [
@@ -115,9 +120,35 @@ describe("the agent flow over HTTP", () => {
   test("bootstrap the entity", async () => {
     const r = await post("/entities", { orgnr: E, name: "Demo AS", vat_registered: true, year: Y });
     expect(r.status).toBe(200);
-    expect(r.json).toEqual({ entity: E, created: true, accounts_added: expect.any(Number), year: Y });
+    expect(r.json).toEqual({ entity: E, created: true, accounts_added: expect.any(Number), year: Y, company_profile: {} });
     const again = await post("/entities", { orgnr: E, name: "Demo AS", year: Y });
     expect(again.json.created).toBe(false);
+  });
+
+  test("company profile: PUT /company-profile, bootstrap fills a missing one only (#15)", async () => {
+    // no profile yet: the SAF-T export says what to set instead of serving an invalid file
+    const noProfile = await get(`/saf-t?entity=${E}&year=${Y}`);
+    expect(noProfile.status).toBe(422);
+    expect(noProfile.json).toEqual({
+      error: `entity ${E}: the SAF-T Header/Company needs contact.firstName, contact.lastName, contact.telephone, ` +
+        "address.city, address.postalCode in the company profile (Contact with a contact person and telephone, and " +
+        "the company's address, are mandatory); set them with set_company_profile (PUT /company-profile)",
+      sqlstate: null,
+    });
+
+    const filled = await post("/entities", { orgnr: E, name: "Demo AS", year: Y, company_profile: { contact: PROFILE.contact } });
+    expect(filled.json).toMatchObject({ created: false, company_profile: { contact: PROFILE.contact } });
+    const kept = await post("/entities", { orgnr: E, name: "Demo AS", year: Y, company_profile: PROFILE });
+    expect(kept.json.company_profile).toEqual({ contact: PROFILE.contact });
+
+    const r = await call("PUT", "/company-profile", { body: { entity: E, company_profile: PROFILE } });
+    expect(r.status).toBe(200);
+    expect(r.json).toEqual({ entity: E, company_profile: PROFILE });
+    const bad = await call("PUT", "/company-profile", { body: { entity: E, company_profile: { contact: { firstName: "Kari" } } } });
+    expect(bad.status).toBe(422);
+    expect(bad.json).toEqual({ error: "company_profile.contact needs lastName", sqlstate: "P0001" });
+    const ro = await call("PUT", "/company-profile", { body: { entity: E, company_profile: {} }, token: RO_TOKEN });
+    expect(ro.status).toBe(403);
   });
 
   test("reference data: parties and accounts, PUT and POST", async () => {
@@ -292,6 +323,8 @@ describe("the agent flow over HTTP", () => {
       new RegExp(`^attachment; filename="SAF-T Financial_${E}_\\d{14}_1_1\\.xml"$`));
     expect(r.text).toStartWith("<?xml");
     expect(r.text).toContain("<NumberOfEntries>4</NumberOfEntries>");
+    expect(r.text).toContain("<FirstName>Kari</FirstName>");
+    expect(r.text).toContain("<City>Oslo</City>");
 
     const range = await get(`/saf-t?entity=${E}&from=2026-01-01&to=2026-01-31&version=1.40`);
     expect(range.status).toBe(200);
@@ -333,6 +366,16 @@ describe("the agent flow over HTTP", () => {
     const badOrigin = await call("POST", "/documents?origin=selfie", { raw: bytes, headers: { "content-type": "image/png" } });
     expect(badOrigin.status).toBe(422);
     expect(badOrigin.json.sqlstate).toBe("23514");
+    // #15: a constraint's detail with a non-ASCII value reached the client
+    // with a NUL after every character (Bun's client; see pgText in app.ts)
+    const note = encodeURIComponent("kvittering fra Bjørn");
+    const garbled = await call("POST", `/documents?origin=selfie&note=${note}`, { raw: bytes, headers: { "content-type": "image/png" } });
+    expect(garbled.status).toBe(422);
+    expect(garbled.json.error).toBe('new row for relation "document" violates check constraint "document_origin_check"');
+    expect(garbled.json.detail).not.toContain("\u0000");
+    expect(garbled.json.detail).toStartWith("Failing row contains (");
+    // the ASCII survives intact; the ø Bun discarded is marked, not dropped
+    expect(garbled.json.detail).toContain(", image/png, 19, selfie, kvittering fra Bj�rn, ");
     const multipart = await call("POST", "/documents?origin=receipt", { raw: new FormData() });
     expect(multipart.status).toBe(400);
 
@@ -411,6 +454,32 @@ describe("auth", () => {
     expect((await get(`/journal?entity=${E}&nr=1`)).status).toBe(200);
     expect((await call("PUT", "/parties", { body: { entity: E, id: "K2", name: "Kunde 2 AS", customer: true } })).status).toBe(200);
   });
+});
+
+// ---------------------------------------------------------------------------
+describe("Postgres error text (#15)", () => {
+  // what Bun hands us for each detail, straight from the server: the repair
+  // keeps the ASCII and marks each lost character; once Bun decodes the field
+  // correctly (no NUL), pgText passes it through untouched
+  const cases: [sent: string, repaired: string][] = [
+    ["plain ascii", "plain ascii"],
+    ["Bjørn", "Bj\uFFFDrn"],
+    ["Ås og Ærø", "\uFFFDs og \uFFFDr\uFFFD"],
+    ["5 € pr stk", "5 \uFFFD pr stk"],
+    ["emoji 😀 x", "emoji \uFFFD\uFFFD x"],
+  ];
+  for (const [sent, repaired] of cases) {
+    test(JSON.stringify(sent), async () => {
+      let detail = "";
+      try {
+        await admin.unsafe(`do $$ begin raise exception 'x' using detail = '${sent}'; end $$`);
+      } catch (e) {
+        detail = (e as { detail: string }).detail;
+      }
+      expect(pgText(detail)).toBe(detail.includes("\u0000") ? repaired : sent);
+      expect(pgText(detail)).not.toContain("\u0000");
+    });
+  }
 });
 
 // ---------------------------------------------------------------------------

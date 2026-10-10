@@ -216,8 +216,36 @@ describe("golden fixture (enkelt-regnskap, 4. termin 2026)", () => {
     expect(v140.xml).toBe(v130.xml.replace("<AuditFileVersion>1.30</AuditFileVersion>", "<AuditFileVersion>1.40</AuditFileVersion>"));
   });
 
+  test("no company profile: refused, naming what Header/Company needs (#15)", async () => {
+    await expect(buildSaft(sql, { entity: E, from: FROM, to: TO, now: NOW })).rejects.toThrow(
+      `entity ${E}: the SAF-T Header/Company needs contact.firstName, contact.lastName, contact.telephone, ` +
+      "address.city, address.postalCode in the company profile");
+    // an override that completes only part of it still names the rest
+    await expect(buildSaft(sql, { entity: E, from: FROM, to: TO, company: { contact: company().contact } }))
+      .rejects.toThrow("needs address.city, address.postalCode in the company profile");
+  });
+
+  withXmllint("the entity's stored company profile is the default: same file as passing it, valid (#15)", async () => {
+    const { name: _, ...profile } = company();
+    await sql`select set_company_profile(${{ entity: E, company_profile: profile }}::jsonb)`;
+    const stored = await asRo(sql, (tx) => buildSaft(tx, { entity: E, from: FROM, to: TO, now: NOW }));
+    const explicit = await buildSaft(sql, { entity: E, from: FROM, to: TO, now: NOW, company: company() });
+    expect(stored.xml).toBe(explicit.xml);
+    await validate(stored.xml, "1.30");
+    // opts.company overrides key by key
+    const other = await buildSaft(sql, {
+      entity: E, from: FROM, to: TO, now: NOW,
+      company: { contact: { firstName: "Kari", lastName: "Nordmann", telephone: "99999999" } },
+    });
+    expect(other.xml).toContain("<FirstName>Kari</FirstName>");
+    expect(other.xml).toContain(`<City>${company().address!.city}</City>`);
+    await sql`select set_company_profile(${{ entity: E, company_profile: {} }}::jsonb)`;
+  });
+
   test("defaults: software, header comment, journal description, bank accounts from bank_account", async () => {
     await sql`insert into bank_account (id_hash, entity, bban, ledger_account) values ('h1', ${E}, '12345678901', '1920')`;
+    const { name: _, bankAccounts: __, ...profile } = company();
+    await sql`select set_company_profile(${{ entity: E, company_profile: profile }}::jsonb)`;
     const out = await buildSaft(sql, { entity: E, from: FROM, to: TO, now: NOW });
     expect(out.xml).toContain("<SoftwareID>hovedbok</SoftwareID>");
     expect(out.xml).toContain("<Name>Eksempel Catering</Name>");
@@ -226,6 +254,7 @@ describe("golden fixture (enkelt-regnskap, 4. termin 2026)", () => {
     expect(out.xml).toContain("<BankAccountNumber>12345678901</BankAccountNumber>");
     expect(out.xml).not.toContain("98765432109");
     await sql`delete from bank_account where id_hash = 'h1'`;
+    await sql`select set_company_profile(${{ entity: E, company_profile: {} }}::jsonb)`;
   });
 
   test("rejects a bad period or unknown entity", async () => {

@@ -9,8 +9,9 @@
 // (test/saft.test.ts).
 //
 // What is read, and from where (research-norsk-compliance.md § 7):
-//   Header         entity + the caller's company profile (address, contact,
-//                  bank accounts default to bank_account rows)
+//   Header         entity + its company profile (entity.company_profile, 0032;
+//                  opts.company overrides per key): address, contact, bank
+//                  accounts (default: bank_account rows)
 //   MasterFiles    account (name, grouping; std_account fills gaps), balances
 //                  summed from the journal view (opening = before `from`,
 //                  closing = through `to`); party with customer/supplier/owner
@@ -337,7 +338,29 @@ function taxAmounts(v: Voucher, rates: RateRow[]): Map<number, number> {
 
 // ---------------------------------------------------------------------------
 
-/** Builds the SAF-T Financial file for one entity and period from the stored journal. */
+/**
+ * What Header/Company still lacks for a valid, truthful file: the XSD makes
+ * Contact (with ContactPerson first and last name) mandatory and Skatteetaten's
+ * documentation the contact's Telephone; City and PostalCode are not filled
+ * with placeholders. Empty when complete.
+ */
+export function missingCompanyFields(c: SaftCompany): string[] {
+  const missing: string[] = [];
+  const has = (v: string | undefined) => typeof v === "string" && v.trim() !== "";
+  if (!has(c.contact?.firstName)) missing.push("contact.firstName");
+  if (!has(c.contact?.lastName)) missing.push("contact.lastName");
+  if (!has(c.contact?.telephone)) missing.push("contact.telephone");
+  if (!has(c.address?.city)) missing.push("address.city");
+  if (!has(c.address?.postalCode)) missing.push("address.postalCode");
+  return missing;
+}
+
+/**
+ * Builds the SAF-T Financial file for one entity and period from the stored
+ * journal. Header/Company comes from the entity's company profile (0032),
+ * with opts.company overriding it key by key (address, contact, bankAccounts,
+ * name); throws, naming the fields, when that leaves the header incomplete.
+ */
 export async function buildSaft(sql: SQL, opts: SaftOptions): Promise<SaftExport> {
   const { entity, from, to } = opts;
   assertDate(from, "from");
@@ -350,9 +373,18 @@ export async function buildSaft(sql: SQL, opts: SaftOptions): Promise<SaftExport
   const today = osloDate(now);
   const name = periodName(from, to);
 
-  const [ent] = await sql`select orgnr, name from entity where orgnr = ${entity}` as { orgnr: string; name: string }[];
+  const [ent] = await sql`select orgnr, name, company_profile from entity where orgnr = ${entity}` as
+    { orgnr: string; name: string; company_profile: SaftCompany }[];
   if (!ent) throw new Error(`entity ${entity} does not exist`);
-  const company = opts.company ?? {};
+  const company: SaftCompany = { ...ent.company_profile, ...opts.company };
+  const missing = missingCompanyFields(company);
+  if (missing.length) {
+    throw new Error(
+      `entity ${entity}: the SAF-T Header/Company needs ${missing.join(", ")} in the company profile ` +
+      "(Contact with a contact person and telephone, and the company's address, are mandatory); " +
+      "set them with set_company_profile (PUT /company-profile)",
+    );
+  }
 
   const bankAccounts = company.bankAccounts ?? (await sql`
     select bban as number, ledger_account as "ledgerAccount", currency

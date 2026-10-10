@@ -24,7 +24,16 @@ export const descriptions: Record<string, string> = {
     "defaults, and open a fiscal year (periods 1-12 = months, 13 = year-end closing). year defaults to the current year; " +
     "vat_registered (default false) and vat_term monthly|bimonthly|yearly (default bimonthly) drive the MVA-melding. " +
     "Idempotent and non-destructive: on an existing entity it only adds what is missing (new standard accounts, the " +
-    "requested year) and returns created=false. Run it once per entity and again to open a new year." + WRITE,
+    "requested year) and returns created=false. Run it once per entity and again to open a new year. Optional " +
+    "company_profile (see set_company_profile) is stored on a new entity, or on an existing one without a profile; a " +
+    "re-run never overwrites a stored one. The result carries the profile now stored." + WRITE,
+
+  set_company_profile:
+    "Set the company profile the SAF-T export puts in Header/Company: {address {street, number, city, postalCode, " +
+    "country}, contact {firstName, lastName, telephone, email}, bankAccounts [{number, ledgerAccount, currency}]}. " +
+    "Replaces the stored profile as a whole (an absent key is removed; {} clears it). saf_t refuses until contact " +
+    "firstName, lastName, telephone and address city, postalCode are set. bankAccounts defaults to the bank accounts " +
+    "connected through Enable Banking. Returns {entity, company_profile}." + WRITE,
 
   upsert_account:
     "Create or update an account in the entity's chart. code is 4 digits (NS 4102). name is required unless code is a " +
@@ -144,7 +153,9 @@ export const descriptions: Record<string, string> = {
   saf_t:
     "Export SAF-T Financial XML (the format Skatteetaten demands on request) for a whole year, or from/to dates " +
     "(not both); version 1.30 (default) or 1.40. Returned as an XML resource named per Skatteetaten's file-name " +
-    "convention. Refused when an account lacks a SAF-T mapping (fix with upsert_account). Read-only.",
+    "convention. Header/Company comes from the entity's company profile: refused (naming the fields) until it has " +
+    "contact firstName, lastName, telephone and address city, postalCode (set them with set_company_profile). " +
+    "Refused when an account lacks a SAF-T mapping (fix with upsert_account). Read-only.",
 
   // --- bank (Enable Banking) ---------------------------------------------------------
   start_consent:

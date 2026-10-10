@@ -129,11 +129,42 @@ export function statusFor(sqlstate: string): number {
   return 500;
 }
 
+const LOST = "�";
+
+/**
+ * Undoes Bun's Postgres client slip on an error field (#15). Bun 1.4 decodes
+ * the ErrorResponse detail and hint (not the message) wrongly when they hold a
+ * non-ASCII character: it decodes the UTF-8 into UTF-16 and then reads those
+ * UTF-16LE bytes as UTF-8 again, so every character becomes two code units —
+ * an ASCII one arrives followed by a NUL, a non-ASCII one as U+FFFD plus a
+ * NUL or a stray byte (its original value is gone before we see it). Postgres
+ * text never contains NUL, so a NUL is the signature: read the string back
+ * pairwise, keeping the ASCII characters and marking each lost one with
+ * U+FFFD. Should a lost character's bytes have formed valid UTF-8 with its
+ * neighbour (the pairing breaks), fall back to dropping the NULs.
+ */
+export function pgText(s: string): string {
+  if (!s.includes("\u0000")) return s;
+  const ascii = (c: string) => c > "\u0000" && c < "\u0080";
+  let out = "";
+  if (s.length % 2 === 0) {
+    for (let i = 0; i < s.length; i += 2) {
+      const a = s[i]!;
+      const b = s[i + 1]!;
+      if (ascii(a) && b === "\u0000") out += a;
+      else if ((ascii(a) || a === LOST || a === "\u0000") && (ascii(b) || b === LOST || b === "\u0000")) out += LOST;
+      else return s.replaceAll("\u0000", "");
+    }
+    return out;
+  }
+  return s.replaceAll("\u0000", "");
+}
+
 function errorResponse(e: unknown): Response {
   if (isPgError(e)) {
-    const body: Record<string, string> = { error: e.message, sqlstate: e.errno };
-    if (e.detail) body.detail = e.detail;
-    if (e.hint) body.hint = e.hint;
+    const body: Record<string, string> = { error: pgText(e.message), sqlstate: e.errno };
+    if (e.detail) body.detail = pgText(e.detail);
+    if (e.hint) body.hint = pgText(e.hint);
     return Response.json(body, { status: statusFor(e.errno) });
   }
   if (e instanceof HttpError) return Response.json({ error: e.message, sqlstate: null }, { status: e.status });
@@ -456,6 +487,7 @@ export function createApi(opts: ApiOptions) {
 
   // --- commands --------------------------------------------------------------
   add({ method: "POST", path: "/entities", operationId: "bootstrap_entity" }, jsonbCommand("bootstrap_entity"));
+  add({ method: "PUT", path: "/company-profile", operationId: "set_company_profile" }, jsonbCommand("set_company_profile"));
   add({ method: "PUT", path: "/accounts", operationId: "upsert_account" }, jsonbCommand("upsert_account"));
   add({ method: "POST", path: "/accounts", operationId: "upsert_account_post", aliasOf: "upsert_account" }, jsonbCommand("upsert_account"));
   add({ method: "PUT", path: "/parties", operationId: "upsert_party" }, jsonbCommand("upsert_party"));

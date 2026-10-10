@@ -16,7 +16,7 @@ afterAll(dropTestDb);
 async function bootstrap(db: SQL, over: Record<string, unknown> = {}) {
   const payload = { orgnr: E, name: "Demo AS", vat_registered: true, year: 2026, ...over };
   const [{ r }] = await db`select bootstrap_entity(${payload}::jsonb) as r`;
-  return r as { entity: string; created: boolean; accounts_added: number; year: number };
+  return r as { entity: string; created: boolean; accounts_added: number; year: number; company_profile: object };
 }
 
 describe("vat codes", () => {
@@ -84,7 +84,7 @@ describe("standard chart", () => {
 
 describe("bootstrap_entity", () => {
   test("creates entity, copies the chart with control and vat defaults, opens the year", async () => {
-    expect(await bootstrap(sql)).toEqual({ entity: E, created: true, accounts_added: 745, year: 2026 });
+    expect(await bootstrap(sql)).toEqual({ entity: E, created: true, accounts_added: 745, year: 2026, company_profile: {} });
 
     const [ent] = await sql`select name, vat_registered, vat_term from entity where orgnr = ${E}`;
     expect(ent).toEqual({ name: "Demo AS", vat_registered: true, vat_term: "bimonthly" });
@@ -112,7 +112,7 @@ describe("bootstrap_entity", () => {
     await bootstrap(sql);
     await sql`update account set name = 'Bank DNB' where entity = ${E} and code = '1920'`;
     expect(await bootstrap(sql, { name: "Other name" })).toEqual({
-      entity: E, created: false, accounts_added: 0, year: 2026,
+      entity: E, created: false, accounts_added: 0, year: 2026, company_profile: {},
     });
     const [a] = await sql`select name from account where entity = ${E} and code = '1920'`;
     expect(a.name).toBe("Bank DNB");

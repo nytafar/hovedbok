@@ -72,8 +72,8 @@ curl -H "Authorization: Bearer $API_TOKEN" -d @voucher.json localhost:3000/vouch
 curl -H "Authorization: Bearer $API_RO_TOKEN" "localhost:3000/saldobalanse?entity=999888777&year=2026&period_from=1&period_to=12"
 ```
 
-- Commands: `POST /entities` (bootstrap_entity), `PUT|POST /accounts`,
-  `PUT|POST /parties`, `POST /vouchers`, `POST /vouchers/{year}/{nr}/reverse`,
+- Commands: `POST /entities` (bootstrap_entity), `PUT /company-profile`
+  (set_company_profile), `PUT|POST /accounts`, `PUT|POST /parties`, `POST /vouchers`, `POST /vouchers/{year}/{nr}/reverse`,
   `POST /periods/close`, `POST /fiscal-years/close`. jsonb commands take
   their payload verbatim as the body; the others take `{entity, …}`.
 - Reads: `GET /journal`, `/account-balance`, `/account-year-balance`,
@@ -84,7 +84,9 @@ curl -H "Authorization: Bearer $API_RO_TOKEN" "localhost:3000/saldobalanse?entit
   `?entity=<orgnr>` (required), equality filters on the keys, `limit`/`offset`.
   `GET /mva-melding/{year}/{term}?entity=` (XML, `format=json` for lines and
   totals) and `GET /saf-t?entity=&year=` or `&from=&to=` (XML, Skatteetaten's
-  file name in Content-Disposition).
+  file name in Content-Disposition). SAF-T's Header/Company comes from the
+  entity's company profile (contact and address; 422 naming the missing
+  fields until it is set).
 - Documents: `POST /documents?origin=receipt` with the raw bytes as the body
   and the media type as Content-Type (no multipart); `GET /documents/{sha256}`
   returns the bytes, re-hashed on every read; `POST

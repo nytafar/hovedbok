@@ -90,17 +90,16 @@ const run = (entity: string, withBank: boolean) =>
     connectBank: withBank ? connectBank : undefined,
   });
 
-// Known gap: GET /saf-t has no company profile, so Header/Company/Contact —
-// mandatory in the Norwegian XSD — is missing and the file as served does not
-// validate. The flow reports that step as FAIL (live mode too); here it is
-// held apart: the rest of the file must validate (validWithContact), and the
-// test.failing below turns red once the API serves a valid file — then drop
-// both this exception and the `.failing`.
+/** Every step passed or (bank-less) skipped; with xmllint, the SAF-T file validates as served. */
 function expectGreen(r: FlowReport): void {
-  const bad = r.steps.filter((s) => s.name !== SAFT_XSD_STEP && s.status !== "pass" && s.status !== "skip");
+  const bad = r.steps.filter((s) => s.status !== "pass" && s.status !== "skip");
   // the whole report on failure: which step, and what it saw
   expect({ bad: bad.map((s) => s.name), report: bad.length ? formatReport(r) : "" }).toEqual({ bad: [], report: "" });
-  if (xmllint) expect(r.facts.saftXsd).toEqual({ valid: false, validWithContact: true });
+  expect(r.ok).toBe(true);
+  if (xmllint) {
+    expect(r.facts.saftXsd).toEqual({ valid: true });
+    expect(r.steps.find((s) => s.name === SAFT_XSD_STEP)).toMatchObject({ status: "pass", detail: "valid as served" });
+  }
 }
 
 const VOUCHERS = {
@@ -163,12 +162,7 @@ describe("live-mode degradation: no bank connection", () => {
     expect(r.facts.saftEntries).toBe(8);
     const report = formatReport(r);
     expect(report).toContain("SKIP  bank connection");
-    expect(report).toMatch(/: \d+ passed, [01] failed, 4 skipped, 0 not run$/);
-  });
-
-  test.skipIf(!xmllint).failing("known gap: the SAF-T file GET /saf-t serves validates as is (no company Contact over HTTP yet)", async () => {
-    const r = await run(LEDGER_ONLY, false);
-    expect(r.steps.find((s) => s.name === SAFT_XSD_STEP)?.status).toBe("pass");
+    expect(report).toMatch(/^OK: \d+ passed, 0 failed, 4 skipped, 0 not run$/m);
   });
 
   test("a failing step is reported, and halts what depends on it", async () => {
