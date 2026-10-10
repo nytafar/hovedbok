@@ -57,6 +57,57 @@ shapes. `mva_term` rolls `vat_summary` up to the entity's VAT term
 `src/mva.ts` builds the melding XML from it (whole kroner, per Skatteetaten's
 XSD).
 
+## HTTP API
+
+`bun src/api/serve.ts` serves the same operations over HTTP (Hono on
+Bun.serve). Every route is 1:1 with a SQL function or view — the OpenAPI 3.1
+document at `/openapi.json` lists them all, `operationId` = the SQL name. The
+adapter adds no logic: a refused command comes back as
+`{"error": <the database's message>, "sqlstate": "P0001"}` with a 4xx (class
+22 → 400, 42501 → 403, 23505/40xxx → 409, other 23xxx and RAISE → 422).
+
+```sh
+API_TOKEN=… API_RO_TOKEN=… bun src/api/serve.ts
+curl -H "Authorization: Bearer $API_TOKEN" -d @voucher.json localhost:3000/vouchers
+curl -H "Authorization: Bearer $API_RO_TOKEN" "localhost:3000/saldobalanse?entity=999888777&year=2026&period_from=1&period_to=12"
+```
+
+- Commands: `POST /entities` (bootstrap_entity), `PUT|POST /accounts`,
+  `PUT|POST /parties`, `POST /vouchers`, `POST /vouchers/{year}/{nr}/reverse`,
+  `POST /periods/close`, `POST /fiscal-years/close`. jsonb commands take
+  their payload verbatim as the body; the others take `{entity, …}`.
+- Reads: `GET /journal`, `/account-balance`, `/account-year-balance`,
+  `/saldobalanse`, `/kontospesifikasjon`, `/bokforingsspesifikasjon`,
+  `/kundespesifikasjon`, `/leverandorspesifikasjon`, `/resultat`, `/balanse`,
+  `/vat-summary`, `/vat-control`, `/mva-term`, `/voucher-without-document`,
+  `/accounts`, `/parties`, `/bank/unmatched`, `/bank/reconciliation` —
+  `?entity=<orgnr>` (required), equality filters on the keys, `limit`/`offset`.
+  `GET /mva-melding/{year}/{term}?entity=` (XML, `format=json` for lines and
+  totals) and `GET /saf-t?entity=&year=` or `&from=&to=` (XML, Skatteetaten's
+  file name in Content-Disposition).
+- Documents: `POST /documents?origin=receipt` with the raw bytes as the body
+  and the media type as Content-Type (no multipart); `GET /documents/{sha256}`
+  returns the bytes, re-hashed on every read; `POST
+  /vouchers/{year}/{nr}/documents {"entity", "sha256"}` attaches one.
+
+Auth: one listener, two bearer tokens. `API_TOKEN` runs on
+`DATABASE_URL_APP`, `API_RO_TOKEN` on `DATABASE_URL_RO` and gets GET only.
+`hovedbok_app` and `hovedbok_ro` stay NOLOGIN privilege anchors (0001);
+deploy creates the logins, one per principal (ADR-0010), so `created_by`
+names who posted:
+
+```sql
+create role hovedbok_api login password '…' in role hovedbok_app;
+create role hovedbok_api_ro login password '…' in role hovedbok_ro;
+```
+
+Environment: `API_TOKEN` (required), `API_RO_TOKEN`, `DATABASE_URL_APP`
+(default `DATABASE_URL`, else the compose db on 5433 — superuser, dev only;
+the server warns), `DATABASE_URL_RO` (default `DATABASE_URL_APP`),
+`DOCUMENTS_DIR` (default `./documents`), `PORT` (3000), `HOST` (127.0.0.1).
+`/openapi.json` and `/bank/consent-callback` (Enable Banking's redirect,
+#10) take no token.
+
 ## Layout
 
 - `db/migrations/` — the system: schema, invariants, commands, views
