@@ -84,6 +84,8 @@ export interface Route {
   query?: string[];
   /** No bearer token required. */
   public?: boolean;
+  /** A second method on another route's operation (same handler, same payload). */
+  aliasOf?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -455,9 +457,9 @@ export function createApi(opts: ApiOptions) {
   // --- commands --------------------------------------------------------------
   add({ method: "POST", path: "/entities", operationId: "bootstrap_entity" }, jsonbCommand("bootstrap_entity"));
   add({ method: "PUT", path: "/accounts", operationId: "upsert_account" }, jsonbCommand("upsert_account"));
-  add({ method: "POST", path: "/accounts", operationId: "upsert_account_post" }, jsonbCommand("upsert_account"));
+  add({ method: "POST", path: "/accounts", operationId: "upsert_account_post", aliasOf: "upsert_account" }, jsonbCommand("upsert_account"));
   add({ method: "PUT", path: "/parties", operationId: "upsert_party" }, jsonbCommand("upsert_party"));
-  add({ method: "POST", path: "/parties", operationId: "upsert_party_post" }, jsonbCommand("upsert_party"));
+  add({ method: "POST", path: "/parties", operationId: "upsert_party_post", aliasOf: "upsert_party" }, jsonbCommand("upsert_party"));
   add({ method: "POST", path: "/vouchers", operationId: "post_voucher" }, jsonbCommand("post_voucher"));
 
   add({ method: "POST", path: "/vouchers/:year/:nr/reverse", operationId: "reverse_voucher" }, async (c) => {

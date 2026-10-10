@@ -109,6 +109,21 @@ the server warns), `DATABASE_URL_RO` (default `DATABASE_URL_APP`),
 authenticated by its one-time `state`) take no token. The bank routes read
 `ENABLE_BANKING_*` (below), `PSU_IP_ADDRESS` and `PSU_USER_AGENT`.
 
+## MCP server
+
+`bun src/mcp/serve.ts` serves the same operations as MCP tools over
+streamable HTTP (`POST /mcp`, stateless, JSON responses) — tool name = the
+API's `operationId`, input schema = the route's OpenAPI parameters and body.
+Each tool call is dispatched in-process through the HTTP app, so payloads,
+validation and error messages are the API's. Not exposed: the consent
+callback (browser-only) and `/openapi.json` (`tools/list` is its counterpart).
+`store_document` takes `content_base64` + `media_type`; XML exports and
+documents come back as embedded resources.
+
+Environment: `MCP_TOKEN` (default `API_TOKEN`; one is required),
+`DATABASE_URL_APP`, `DOCUMENTS_DIR`, `ENABLE_BANKING_*`, `PSU_*` as for the
+API, `PORT_MCP` (3001), `HOST` (127.0.0.1). Read-write only.
+
 ## Enable Banking
 
 `src/bank/` pulls the bank statement in through Enable Banking's AIS API and
