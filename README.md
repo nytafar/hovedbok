@@ -154,11 +154,30 @@ within a day are numbered (`fp:<hash>:2`), not collapsed. Account identity is
 the account and its facts, and marks the old connection `superseded`.
 Warnings (conflicts, truncated pagination) land in `bank_fetch.detail`.
 
+## End to end
+
+`test/e2e_flow.ts` is the agent loop over HTTP: bank facts in → `/bank/unmatched`
+→ vouchers with documents and matches (and a reverse + re-post) → reconciled,
+VAT, MVA-melding, SAF-T. `bun test test/e2e.test.ts` runs it offline in CI;
+the same flow runs against a deployment:
+
+```sh
+bun scripts/e2e.ts --base-url=https://hovedbok.example --token=$API_TOKEN [--ro-token=$API_RO_TOKEN]
+# or E2E_BASE_URL, E2E_TOKEN, E2E_RO_TOKEN; E2E_ENTITY / --entity (default 999999999)
+```
+
+It only writes to the test entity (orgnr `9999xxxxx`), under fixed
+idempotency keys, so re-runs replay; nothing is closed. Without an authorized
+bank connection for that entity the bank steps are SKIPPED (bank facts only
+arrive through sync) and the ledger loop runs alone. Prints PASS/FAIL/SKIP
+per step; exits 1 if a step failed.
+
 ## Layout
 
 - `db/migrations/` — the system: schema, invariants, commands, views
 - `db/migrate.ts` — tiny migrator (`bun run migrate`)
 - `src/` — adapters only: HTTP API, MCP server, Enable Banking sync, exporters
+- `scripts/e2e.ts` — the end-to-end loop against a live deployment
 - `test/` — invariant suite against real Postgres + golden fixtures
 
 Design docs and ADRs: `~/hvelv/repos/hovedbok/`.
