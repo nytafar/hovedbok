@@ -58,8 +58,10 @@ shapes.
 writes the facts into `bank_transaction` / `bank_balance` (BOOK only, keyed by
 `entry_reference` or a content fingerprint; pending movements live in a
 replaceable snapshot). Linking facts to vouchers goes through the
-`match_bank` / `unmatch_bank` commands; `unmatched_bank` is the queue and
-`bank_reconciliation` the assertion.
+`match_bank` / `unmatch_bank` commands, or `post_voucher`'s `"matches"` array
+when the voucher is posted for that movement; either way the database insists
+the linked line sits on the bank account's own 19xx account. `unmatched_bank`
+is the queue and `bank_reconciliation` the assertion.
 
 Environment (an application registered in the Enable Banking Control Panel;
 see `~/hvelv/repos/hovedbok/howto-enable-banking-consent.md`):
@@ -80,13 +82,20 @@ bun src/bank/cli.ts status
 ```
 
 Rules the sync enforces (from `research-enable-banking.md`): at most 4
-unattended fetches per consent per rolling 24 h (a 5th is deferred, logged in
-`bank_fetch`); a 429 puts the consent on a 6 h backoff (longer if the bank
-says so); a sync a human triggered sends the `Psu-*` headers all-or-none and
-is not budgeted; the backfill runs immediately after consent, attended when
-the browser context is known. Re-syncing an overlapping window never inserts a
-fact twice. Account identity is `identification_hash`; re-consent refreshes
-`uid` and the connection, keeps the account and its facts.
+unattended fetches per consent per rolling 24 h — every run that reached the
+bank counts, errors included; a 5th is deferred and logged in `bank_fetch`,
+and the connection row is locked for the run so concurrent syncs cannot
+double-spend; a 429 puts the consent on a 6 h backoff (longer if the bank
+says so); a sync a human triggered sends the `Psu-*` headers all-or-none
+(`sync --attended` needs the person's real address in `PSU_IP_ADDRESS`) and
+is not budgeted, but if the API refuses the headers it only falls back to an
+unattended read when the budget allows; the backfill runs immediately after
+consent, attended when the browser context is known. Re-syncing an
+overlapping window never inserts a fact twice; keyless movements that repeat
+within a day are numbered (`fp:<hash>:2`), not collapsed. Account identity is
+`identification_hash`; re-consent refreshes `uid` and the connection, keeps
+the account and its facts, and marks the old connection `superseded`.
+Warnings (conflicts, truncated pagination) land in `bank_fetch.detail`.
 
 ## Layout
 

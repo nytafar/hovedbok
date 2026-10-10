@@ -67,11 +67,15 @@ async function main(argv: string[]): Promise<void> {
           : (await sql`select id from bank_connection where status = 'authorized' order by id`).map(
               (r: { id: number | string }) => Number(r.id),
             );
+        // --attended: a human is at the keyboard. Enable Banking tells attended
+        // from unattended by the Psu-* headers alone, so the address must be
+        // the human's real one — never a placeholder that would lie to the
+        // bank and dodge the unattended budget.
+        const ip = process.env.PSU_IP_ADDRESS?.trim();
+        if (attended && !ip) throw new Error("--attended needs PSU_IP_ADDRESS (the public address of the person syncing)");
         for (const id of targets) {
-          // --attended: a human is at the keyboard; without a browser we only
-          // have an address, which is the one header every bank requires.
           const r = await syncConnection(sql, client, id, {
-            psu: attended ? { ipAddress: process.env.PSU_IP_ADDRESS ?? "127.0.0.1" } : undefined,
+            psu: attended && ip ? { ipAddress: ip, userAgent: process.env.PSU_USER_AGENT?.trim() } : undefined,
             onWarning: (m) => console.warn(m),
           });
           console.log(JSON.stringify(r, null, 2));
@@ -83,7 +87,7 @@ async function main(argv: string[]): Promise<void> {
           select c.id, c.entity, c.aspsp_name, c.status, c.valid_until, c.last_synced_at, c.backoff_until,
                  (select count(*) from bank_account a where a.connection_id = c.id) as accounts,
                  (select count(*) from bank_fetch f where f.connection_id = c.id
-                     and not f.attended and f.outcome in ('ok', 'rate_limited')
+                     and not f.attended and f.outcome <> 'deferred'
                      and f.started_at > now() - interval '24 hours') as unattended_24h
             from bank_connection c order by c.id`;
         console.table(rows);

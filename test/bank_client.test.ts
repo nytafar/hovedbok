@@ -10,7 +10,7 @@ import {
   type Transaction,
 } from "../src/bank/client";
 import { JWT_AUDIENCE, JWT_ISSUER, loadPrivateKey, signJwt, tokenSource } from "../src/bank/jwt";
-import { dedupKey, oreFromDecimal, transactionOre } from "../src/bank/sync";
+import { dedupKey, dedupKeys, oreFromDecimal, transactionOre } from "../src/bank/sync";
 import { fixture, replay, testKeyPem, type Route } from "./bank_replay";
 
 const pem = testKeyPem();
@@ -237,5 +237,25 @@ describe("amounts and dedup keys", () => {
     expect(dedupKey(b)).toBe(dedupKey(a));
     expect(dedupKey({ ...a, balance_after_transaction: { currency: "NOK", amount: "57360.00" } })).not.toBe(dedupKey(a));
     expect(dedupKey({ ...a, entry_reference: " 2026093000003 " })).toBe("2026093000003");
+  });
+
+  test("repeated fingerprints in one window are numbered, in order; keyed rows are not", () => {
+    const k: Transaction = { transaction_amount: { currency: "NOK", amount: "59.00" }, credit_debit_indicator: "DBIT", booking_date: "2026-10-05" };
+    const ref: Transaction = { ...k, entry_reference: "R1" };
+    const keys = dedupKeys([k, ref, { ...k }, { ...k, booking_date: "2026-10-06" }, { ...k }]);
+    const fp = dedupKey(k);
+    expect(keys).toEqual([fp, "R1", `${fp}:2`, dedupKey({ ...k, booking_date: "2026-10-06" }), `${fp}:3`]);
+  });
+
+  test("the client folds a keyed row repeated across pages, never a keyless one", async () => {
+    const keyless = { transaction_amount: { currency: "NOK", amount: "59.00" }, credit_debit_indicator: "DBIT", booking_date: "2026-10-05", status: "BOOK" };
+    const keyed = { ...keyless, entry_reference: "R1" };
+    const { c } = client([
+      { method: "GET", path: (k) => k.path.endsWith("/transactions") && !k.query.continuation_key, reply: { body: { transactions: [keyless, keyed, keyless], continuation_key: "p2" } } },
+      { method: "GET", path: (k) => k.path.endsWith("/transactions") && k.query.continuation_key === "p2", reply: { body: { transactions: [keyed, keyless], continuation_key: null } } },
+    ]);
+    const res = await c.transactions("u1", {});
+    expect(res.transactions).toHaveLength(4);
+    expect(res.truncated).toBe(false);
   });
 });

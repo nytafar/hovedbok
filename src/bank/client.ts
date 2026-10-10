@@ -182,6 +182,12 @@ interface RequestOptions {
   query?: Record<string, string | undefined>;
   body?: unknown;
   psu?: PsuContext;
+  /**
+   * When the API refuses the PSU headers, retry once without them (default).
+   * `false` surfaces the PSU_HEADER_* error instead — the caller decides
+   * whether an unattended read is allowed right now.
+   */
+  psuFallback?: boolean;
 }
 
 interface RequestResult<T> {
@@ -241,7 +247,7 @@ export class EnableBankingClient {
     let psuRefused = false;
     if (Object.keys(psu).length > 0 && (res.status === 400 || res.status === 422)) {
       const body = await res.clone().json().catch(() => undefined) as { error?: string } | undefined;
-      if (typeof body?.error === "string" && body.error.startsWith("PSU_HEADER_")) {
+      if (typeof body?.error === "string" && body.error.startsWith("PSU_HEADER_") && opts.psuFallback !== false) {
         psuRefused = true;
         res = await this.send(method, url, opts.body, {});
       }
@@ -324,15 +330,15 @@ export class EnableBankingClient {
 
   // ----- account data (the bank-side reads the quota applies to) -----
 
-  async accountDetails(uid: string, psu?: PsuContext): Promise<RequestResult<AccountResource>> {
-    return this.request<AccountResource>("GET", `/accounts/${encodeURIComponent(uid)}/details`, { psu });
+  async accountDetails(uid: string, psu?: PsuContext, psuFallback = true): Promise<RequestResult<AccountResource>> {
+    return this.request<AccountResource>("GET", `/accounts/${encodeURIComponent(uid)}/details`, { psu, psuFallback });
   }
 
-  async balances(uid: string, psu?: PsuContext): Promise<RequestResult<Balance[]>> {
+  async balances(uid: string, psu?: PsuContext, psuFallback = true): Promise<RequestResult<Balance[]>> {
     const r = await this.request<{ balances: Balance[] }>(
       "GET",
       `/accounts/${encodeURIComponent(uid)}/balances`,
-      { psu },
+      { psu, psuFallback },
     );
     return { data: r.data.balances ?? [], psuRefused: r.psuRefused };
   }
@@ -341,6 +347,7 @@ export class EnableBankingClient {
     uid: string,
     q: { dateFrom?: string; dateTo?: string; continuationKey?: string; strategy?: "default" | "longest" },
     psu?: PsuContext,
+    psuFallback = true,
   ): Promise<RequestResult<TransactionsPage>> {
     const r = await this.request<TransactionsPage>(
       "GET",
@@ -353,6 +360,7 @@ export class EnableBankingClient {
           strategy: q.strategy,
         },
         psu,
+        psuFallback,
       },
     );
     return { data: { ...r.data, transactions: r.data.transactions ?? [] }, psuRefused: r.psuRefused };
@@ -361,47 +369,55 @@ export class EnableBankingClient {
   /**
    * Every transaction in the window, following continuation_key until the API
    * stops sending one. Guards: a repeated key or more than MAX_PAGES pages
-   * ends the walk (a warning is reported through `onWarning`), and a
-   * transaction seen twice across pages is yielded once.
+   * ends the walk with `truncated: true` (and a warning through `onWarning`).
+   * A transaction with an entry_reference seen twice across pages is yielded
+   * once; keyless rows are never collapsed — two identical payloads can be
+   * two real movements, and the sync numbers them.
    */
   async transactions(
     uid: string,
     q: { dateFrom?: string; dateTo?: string; strategy?: "default" | "longest" },
-    opts: { psu?: PsuContext; onWarning?: (msg: string) => void } = {},
-  ): Promise<{ transactions: Transaction[]; pages: number; psuRefused: boolean }> {
+    opts: { psu?: PsuContext; psuFallback?: boolean; onWarning?: (msg: string) => void } = {},
+  ): Promise<{ transactions: Transaction[]; pages: number; psuRefused: boolean; truncated: boolean }> {
     const out: Transaction[] = [];
     const seenKeys = new Set<string>();
-    const seenTx = new Set<string>();
+    const seenRefs = new Set<string>();
     let continuationKey: string | undefined;
     let pages = 0;
     let psuRefused = false;
+    let truncated = false;
     let psu = opts.psu;
     for (;;) {
       if (pages >= MAX_PAGES) {
         opts.onWarning?.(`account ${uid}: stopped after ${MAX_PAGES} pages (continuation_key never ended)`);
+        truncated = true;
         break;
       }
-      const r = await this.transactionsPage(uid, { ...q, continuationKey }, psu);
+      const r = await this.transactionsPage(uid, { ...q, continuationKey }, psu, opts.psuFallback);
       pages++;
       if (r.psuRefused) {
         psuRefused = true;
         psu = undefined; // the rest of this walk is unattended, consistently
       }
       for (const tx of r.data.transactions) {
-        const id = JSON.stringify(tx);
-        if (seenTx.has(id)) continue;
-        seenTx.add(id);
+        const ref = (tx.entry_reference ?? "").trim();
+        if (ref) {
+          const id = `${ref}\x1f${tx.transaction_amount?.amount ?? ""}\x1f${tx.status ?? ""}`;
+          if (seenRefs.has(id)) continue;
+          seenRefs.add(id);
+        }
         out.push(tx);
       }
       const next = r.data.continuation_key || undefined;
       if (!next) break;
       if (seenKeys.has(next)) {
         opts.onWarning?.(`account ${uid}: continuation_key ${next} repeated; stopping pagination`);
+        truncated = true;
         break;
       }
       seenKeys.add(next);
       continuationKey = next;
     }
-    return { transactions: out, pages, psuRefused };
+    return { transactions: out, pages, psuRefused, truncated };
   }
 }

@@ -21,8 +21,9 @@ const E = "999888777";
 const Y = 2026;
 const UID = "07cc67f4-45d6-494b-adac-09b5cbc7e2b5";
 const HASH = "WwpbCiJhY2NvdW50IiwKImFjY291bnRfaWQiLAoiaWJhbiIKXQpd.mockNO9386011117947hash=";
-const TX = (k: { path: string }) => k.path === `/accounts/${UID}/transactions`;
-const BAL = `/accounts/${UID}/balances`;
+let uid = UID; // refreshed by re-consent
+const TX = (k: { path: string }) => k.path === `/accounts/${uid}/transactions`;
+const BAL = (k: { path: string }) => k.path === `/accounts/${uid}/balances`;
 const pem = testKeyPem();
 const agentRole = `hovedbok_bank_${process.pid}`;
 
@@ -257,7 +258,8 @@ describe("re-sync", () => {
     const res = await syncConnection(app, c, connectionId, { today, now: at(1) });
     expect(res.outcome).toBe("ok");
     expect(res.attended).toBe(false);
-    expect(res.accounts[0]).toMatchObject({ seen: 4, inserted: 1, conflicts: 0, pending: 1, ignored: 0, balances: 2 });
+    // resync.json carries one entry twice (same reference, amount, status): the client folds it
+    expect(res.accounts[0]).toMatchObject({ seen: 3, inserted: 1, conflicts: 0, pending: 1, ignored: 0, balances: 2, truncated: false });
     // unattended: no PSU headers; window reaches OVERLAP_DAYS back from the last sync
     const tx = r.accountCalls()[0]!;
     expect(Object.keys(tx.headers).some((h) => h.startsWith("psu-"))).toBe(false);
@@ -284,7 +286,7 @@ describe("re-sync", () => {
       { method: "GET", path: BAL, reply: "balances-2" },
     ]);
     const res = await syncConnection(app, c, connectionId, { today, now: at(2) });
-    expect(res.accounts[0]).toMatchObject({ seen: 4, inserted: 0, conflicts: 0, pending: 1 });
+    expect(res.accounts[0]).toMatchObject({ seen: 3, inserted: 0, conflicts: 0, pending: 1 });
     expect(await counts()).toEqual({ booked: 5, pending: 1, balances: 6, unmatched: 0, fetches: 3 });
   });
 
@@ -300,6 +302,11 @@ describe("re-sync", () => {
     expect(res.accounts[0]).toMatchObject({ seen: 1, inserted: 0, conflicts: 1 });
     expect(warnings[0]).toMatch(/2026100900005 seen with amount 800100, stored 800000/);
     expect((await counts()).booked).toBe(5);
+    // the warning is on record for an unattended run nobody watched
+    const [f] = await app`select outcome, detail from bank_fetch order by id desc limit 1`;
+    expect(f.outcome).toBe("ok");
+    expect(f.detail).toMatch(/1 conflicts/);
+    expect(f.detail).toMatch(/seen with amount 800100, stored 800000/);
   });
 });
 
@@ -386,12 +393,174 @@ describe("operational guards", () => {
       { method: "POST", path: "/auth", reply: "auth" },
       { method: "POST", path: "/sessions", reply: { body: { ...(await Bun.file(`${import.meta.dir}/fixtures/enable-banking/session.json`).json()), session_id: "new-session", accounts: [{ ...((await Bun.file(`${import.meta.dir}/fixtures/enable-banking/session.json`).json()) as { accounts: Record<string, unknown>[] }).accounts[0], uid: "new-uid" }] } } },
     ]);
+    // pretend the old consent is still live at the bank: it must be superseded, not left for cron
+    await owner`update bank_connection set status = 'authorized' where id = ${connectionId}`;
     const start = await startConsent(app, c, { entity: E, aspsp: { name: "Mock ASPSP" }, redirectUrl: "https://hovedbok.example/cb" });
     const done = await completeConsent(app, c, { state: start.state, code: "c2", ledgerAccount: () => "1930", noBackfill: true });
     expect(done.backfill).toBeNull();
+    expect(done.superseded).toEqual([connectionId]);
     const [acc] = await app`select connection_id, uid, ledger_account from bank_account where id_hash = ${HASH}`;
     expect({ ...acc, connection_id: Number(acc.connection_id) }).toEqual({ connection_id: start.connectionId, uid: "new-uid", ledger_account: "1920" });
     expect((await counts()).booked).toBe(5);
     expect(await matches()).toBe(5);
+    const [old] = await app`select status from bank_connection where id = ${connectionId}`;
+    expect(old.status).toBe("superseded");
+    expect((await syncConnection(app, c, connectionId, { today, now: at(125) })).outcome).toBe("expired");
+    // a second callback with the same state cannot complete the consent again
+    const twice = await completeConsent(app, c, { state: start.state, code: "c2", ledgerAccount: () => "1920", noBackfill: true }).catch((e) => e);
+    expect(twice).toBeInstanceOf(Error);
+    expect(twice.message).toMatch(/no pending bank_connection/);
+    connectionId = start.connectionId;
+    uid = "new-uid";
+  });
+});
+
+describe("review items", () => {
+  const keyless = (booking: string, amount: string, text: string) => ({
+    transaction_amount: { currency: "NOK", amount },
+    creditor: { name: "Kaffebrenneriet" },
+    credit_debit_indicator: "DBIT",
+    status: "BOOK",
+    booking_date: booking,
+    value_date: booking,
+    remittance_information: [text],
+  });
+  const empty = (): Route[] => [
+    { method: "GET", path: TX, reply: { body: { transactions: [], continuation_key: null } } },
+    { method: "GET", path: BAL, reply: { body: { balances: [] } } },
+  ];
+
+  test("two identical keyless movements the same day are two facts; re-sync adds nothing", async () => {
+    const page = { transactions: [keyless("2026-10-05", "59.00", "Kaffe"), keyless("2026-10-05", "59.00", "Kaffe")], continuation_key: null };
+    const { client: c } = client([
+      { method: "GET", path: TX, reply: { body: page } },
+      { method: "GET", path: BAL, reply: { body: { balances: [] } } },
+    ]);
+    const first = await syncConnection(app, c, connectionId, { today, now: at(130) });
+    expect(first.outcome).toBe("ok");
+    expect(first.accounts[0]).toMatchObject({ seen: 2, inserted: 2, conflicts: 0 });
+    const keys = (await app`select dedup_key from bank_transaction where booking_date = '2026-10-05' order by dedup_key` as Row[]).map((r) => r.dedup_key as string);
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toMatch(/^fp:[0-9a-f]{64}$/);
+    expect(keys[1]).toBe(`${keys[0]}:2`);
+    const again = await syncConnection(app, c, connectionId, { today, now: at(131) });
+    expect(again.accounts[0]).toMatchObject({ seen: 2, inserted: 0, conflicts: 0 });
+    expect((await counts()).booked).toBe(7);
+  });
+
+  test("a cut-short pagination keeps last_synced_at and is recorded", async () => {
+    const [{ last_synced_at: before }] = await app`select last_synced_at from bank_connection where id = ${connectionId}`;
+    expect(before).toEqual(at(131)());
+    const { client: c } = client([
+      { method: "GET", path: TX, reply: { body: { transactions: [], continuation_key: "loop" } } },
+      { method: "GET", path: BAL, reply: { body: { balances: [] } } },
+    ]);
+    const res = await syncConnection(app, c, connectionId, { today, now: at(132) });
+    expect(res.outcome).toBe("ok");
+    expect(res.accounts[0]!.truncated).toBe(true);
+    expect(res.warnings.join("\n")).toMatch(/continuation_key loop repeated/);
+    const [{ last_synced_at: after }] = await app`select last_synced_at from bank_connection where id = ${connectionId}`;
+    expect(after).toEqual(at(131)());
+    const [f] = await app`select detail from bank_fetch order by id desc limit 1`;
+    expect(f.detail).toMatch(/truncated/);
+    expect(f.detail).toMatch(/continuation_key loop repeated/);
+  });
+
+  test("two balances of the same type in one answer both land; the view takes the later", async () => {
+    const two = { balances: [
+      { balance_amount: { currency: "NOK", amount: "100.00" }, balance_type: "CLBD", reference_date: "2026-10-09" },
+      { balance_amount: { currency: "NOK", amount: "200.00" }, balance_type: "CLBD", reference_date: "2026-10-10" },
+    ] };
+    const { client: c } = client([
+      { method: "GET", path: TX, reply: { body: { transactions: [], continuation_key: null } } },
+      { method: "GET", path: BAL, reply: { body: two } },
+    ]);
+    const before = (await counts()).balances;
+    const res = await syncConnection(app, c, connectionId, { today, now: at(133) });
+    expect(res.accounts[0]!.balances).toBe(2);
+    expect((await counts()).balances).toBe(before + 2);
+    const [rec] = await app`select bank_balance, reference_date from bank_reconciliation where id_hash = ${HASH}`;
+    expect(Number(rec.bank_balance)).toBe(20000);
+  });
+
+  test("runs that fail after reaching the bank count against the budget", async () => {
+    const broken = client([
+      { method: "GET", path: TX, reply: { body: { transactions: [], continuation_key: null } } },
+      { method: "GET", path: BAL, reply: { status: 500, body: { message: "upstream", error: "ASPSP_ERROR" } } },
+    ]);
+    for (const h of [160, 161, 162, 163]) {
+      const e = await syncConnection(app, broken.client, connectionId, { today, now: at(h) }).catch((x) => x);
+      expect(e).toBeInstanceOf(Error);
+      expect(e.message).toMatch(/ASPSP_ERROR/);
+    }
+    const log = await app`select outcome from bank_fetch order by id desc limit 4` as Row[];
+    expect(log.map((l) => l.outcome)).toEqual(["error", "error", "error", "error"]);
+    const fine = client(empty());
+    const res = await syncConnection(app, fine.client, connectionId, { today, now: at(164) });
+    expect(res.outcome).toBe("deferred");
+    expect(res.detail).toMatch(/4 fetches in 24 h/);
+    expect(fine.r.calls).toHaveLength(0);
+  });
+
+  test("refused PSU headers fall back to an unattended read only when the budget allows", async () => {
+    const refusing = (): Route[] => [
+      {
+        method: "GET",
+        path: (k) => (TX(k) || BAL(k)) && "psu-ip-address" in k.headers,
+        reply: { status: 400, body: { message: "PSU headers required", error: "PSU_HEADER_NOT_PROVIDED" } },
+      },
+      ...empty(),
+    ];
+    // budget spent (hours 160-163): the attended run is refused and must not read unattended
+    const blocked = client(refusing());
+    const res = await syncConnection(app, blocked.client, connectionId, { today, now: at(164), psu });
+    expect(res.outcome).toBe("deferred");
+    expect(res.detail).toMatch(/PSU headers refused \(PSU_HEADER_NOT_PROVIDED\) and unattended budget/);
+    expect(blocked.r.calls).toHaveLength(1);
+    expect(blocked.r.calls[0]!.headers["psu-ip-address"]).toBe(psu.ipAddress);
+    // budget free again: the fallback happens and is logged as an unattended fetch
+    const allowed = client(refusing());
+    const res2 = await syncConnection(app, allowed.client, connectionId, { today, now: at(190), psu });
+    expect(res2.outcome).toBe("ok");
+    expect(res2.attended).toBe(false);
+    expect(allowed.r.calls.map((k) => "psu-ip-address" in k.headers)).toEqual([true, false, false]);
+    const [f] = await app`select attended, outcome, detail from bank_fetch order by id desc limit 1`;
+    expect(f).toMatchObject({ attended: false, outcome: "ok" });
+    expect(f.detail).toMatch(/PSU headers refused; continuing unattended/);
+  });
+
+  test("concurrent syncs serialise on the connection row and cannot double-spend the budget", async () => {
+    for (const h of [220, 221, 222]) {
+      expect((await syncConnection(app, client(empty()).client, connectionId, { today, now: at(h) })).outcome).toBe("ok");
+    }
+    const a = client(empty());
+    const b = client(empty());
+    const [ra, rb] = await Promise.all([
+      syncConnection(app, a.client, connectionId, { today, now: at(223) }),
+      syncConnection(app, b.client, connectionId, { today, now: at(223) }),
+    ]);
+    expect([ra.outcome, rb.outcome].sort()).toEqual(["deferred", "ok"]);
+    expect(a.r.calls.length + b.r.calls.length).toBe(2);
+  });
+
+  test("a consent whose account belongs to another entity is revoked and its session closed", async () => {
+    const E2 = "111111111";
+    await owner`select bootstrap_entity(${{ orgnr: E2, name: "Annen AS", year: Y }}::jsonb)`;
+    const session = (await Bun.file(`${import.meta.dir}/fixtures/enable-banking/session.json`).json()) as Record<string, unknown>;
+    const { client: c, r } = client([
+      { method: "POST", path: "/auth", reply: "auth" },
+      { method: "POST", path: "/sessions", reply: { body: { ...session, session_id: "stolen" } } },
+      { method: "DELETE", path: "/sessions/stolen", reply: { body: { message: "OK" } } },
+    ]);
+    const start = await startConsent(app, c, { entity: E2, aspsp: { name: "Mock ASPSP" }, redirectUrl: "https://hovedbok.example/cb" });
+    const e = await completeConsent(app, c, { state: start.state, code: "c3", ledgerAccount: () => "1920", noBackfill: true }).catch((x) => x);
+    expect(e).toBeInstanceOf(Error);
+    expect(e.message).toMatch(/already belongs to entity 999888777/);
+    const [conn] = await app`select status, session_id, auth_state from bank_connection where id = ${start.connectionId}`;
+    expect(conn).toEqual({ status: "revoked", session_id: "stolen", auth_state: null });
+    expect(r.calls.at(-1)).toMatchObject({ method: "DELETE", path: "/sessions/stolen" });
+    const [acc] = await app`select entity, connection_id from bank_account where id_hash = ${HASH}`;
+    expect(acc.entity).toBe(E);
+    expect(Number(acc.connection_id)).toBe(connectionId);
   });
 });

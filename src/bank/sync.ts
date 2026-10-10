@@ -7,26 +7,36 @@
 //   await syncConnection(sql, client, connectionId, { psu });  // attended (a human clicked)
 //
 // Rules this layer owns (research-enable-banking.md, AGENTS.md):
-// - A sync run of a consent is one fetch. Unattended runs are capped at 4 per
-//   rolling 24 h per consent, counted from bank_fetch; a 5th is deferred.
+// - A sync run of a consent is one fetch. Every run that reached the bank
+//   (ok, rate_limited, error, expired-by-410) counts; unattended runs are
+//   capped at 4 per rolling 24 h per consent, counted from bank_fetch, and a
+//   5th is deferred. The bank_connection row is locked for the run, so two
+//   concurrent syncs cannot both spend the budget.
 // - 429 sets bank_connection.backoff_until = now + max(6 h, Retry-After);
-//   unattended runs before that are deferred without touching the bank.
+//   unattended runs before that are deferred without touching the bank. An
+//   attended run whose PSU headers the API refuses falls back to an
+//   unattended read only when the budget and backoff allow it.
 // - BOOK transactions become bank_transaction rows keyed by entry_reference,
-//   else 'fp:' + a content fingerprint. Re-syncing an overlapping window inserts
-//   nothing twice (on conflict do nothing). Pending transactions replace the
-//   snapshot wholesale. Balances are appended per sync.
+//   else 'fp:' + a content fingerprint, with an occurrence number when the
+//   same fingerprint appears more than once in the window (two identical
+//   card payments the same day are two facts). Re-syncing an overlapping
+//   window inserts nothing twice (on conflict do nothing). Pending
+//   transactions replace the snapshot wholesale. Every balance the bank
+//   returns is appended (fetched_at disambiguates within one fetch).
 // - Backfill runs immediately after consent, attended when the browser
 //   context is known — full history is often reachable only in the first hour.
+// - A run whose pagination was cut short (repeated continuation_key, page
+//   cap) keeps last_synced_at where it was, so the next window re-covers it.
 import type { SQL } from "bun";
 import {
   type AccountResource,
   type Balance,
   EnableBankingClient,
+  EnableBankingError,
   type PsuContext,
   RateLimitedError,
   SessionExpiredError,
   type Transaction,
-  EnableBankingError,
 } from "./client";
 
 export const MAX_UNATTENDED_PER_DAY = 4;
@@ -64,14 +74,19 @@ function remittance(tx: Transaction): string | null {
   return lines.length ? lines.join("\n") : null;
 }
 
-/**
- * The dedup key (0005): entry_reference when the bank gives one, else a
- * fingerprint of the content that survives a re-fetch. balance_after_transaction
- * tells two otherwise identical movements on the same day apart when present.
- */
-export function dedupKey(tx: Transaction): string {
+/** entry_reference when the bank gives one, else null. */
+export function entryReference(tx: Transaction): string | null {
   const ref = (tx.entry_reference ?? "").trim();
-  if (ref) return ref;
+  return ref || null;
+}
+
+/**
+ * The content fingerprint behind a keyless transaction's dedup key: the fields
+ * that survive a re-fetch. balance_after_transaction tells two otherwise
+ * identical movements on the same day apart when present; when it is not,
+ * `dedupKeys` numbers the occurrences.
+ */
+export function fingerprint(tx: Transaction): string {
   const parts = [
     tx.booking_date ?? "",
     tx.value_date ?? "",
@@ -83,6 +98,33 @@ export function dedupKey(tx: Transaction): string {
     tx.balance_after_transaction?.amount ?? "",
   ];
   return "fp:" + new Bun.CryptoHasher("sha256").update(parts.join("\x1f")).digest("hex");
+}
+
+/**
+ * The dedup key (0005) of a single transaction: entry_reference, else the
+ * fingerprint. For a whole window use `dedupKeys`, which also numbers repeated
+ * fingerprints.
+ */
+export function dedupKey(tx: Transaction): string {
+  return entryReference(tx) ?? fingerprint(tx);
+}
+
+/**
+ * Dedup keys for every transaction in one fetched window, in order. Keyless
+ * transactions whose fingerprint repeats get `fp:<hash>:2`, `:3` … — stable
+ * across re-fetches because windows are whole days and booking_date is part
+ * of the hash, so a day's identical movements always travel together.
+ */
+export function dedupKeys(transactions: Transaction[]): string[] {
+  const seen = new Map<string, number>();
+  return transactions.map((tx) => {
+    const ref = entryReference(tx);
+    if (ref) return ref;
+    const fp = fingerprint(tx);
+    const n = (seen.get(fp) ?? 0) + 1;
+    seen.set(fp, n);
+    return n === 1 ? fp : `${fp}:${n}`;
+  });
 }
 
 function counterparty(tx: Transaction): string | null {
@@ -116,7 +158,7 @@ export interface AccountSyncResult {
   seen: number;
   /** New bank_transaction rows. */
   inserted: number;
-  /** Same dedup key, different amount — the bank reused an entry_reference. */
+  /** Same entry_reference, different amount — the bank reused a reference. */
   conflicts: number;
   /** Rows in the replaced pending snapshot. */
   pending: number;
@@ -124,6 +166,8 @@ export interface AccountSyncResult {
   ignored: number;
   balances: number;
   pages: number;
+  /** Pagination was cut short by a guard; the window is not fully covered. */
+  truncated: boolean;
   dateFrom: string | null;
   dateTo: string | null;
 }
@@ -200,10 +244,16 @@ export interface CompleteConsentResult {
   sessionId: string;
   validUntil: string | null;
   accounts: { idHash: string; uid: string | null; ledgerAccount: string | null; iban: string | null; bban: string | null }[];
+  /** Earlier connections of the entity whose accounts all moved here. */
+  superseded: number[];
   backfill: SyncResult | null;
 }
 
-/** POST /sessions, records the session and its accounts, then backfills. */
+/**
+ * POST /sessions, records the session and its accounts, then backfills.
+ * Earlier connections left without accounts are marked superseded so cron
+ * stops syncing them.
+ */
 export async function completeConsent(
   sql: SQL,
   client: EnableBankingClient,
@@ -219,43 +269,69 @@ export async function completeConsent(
   const session = await client.createSession(o.code);
   const validUntil = session.access?.valid_until ?? null;
   const accounts: CompleteConsentResult["accounts"] = [];
+  let superseded: number[] = [];
 
-  await sql.begin(async (tx) => {
-    await tx`
-      update bank_connection
-         set session_id = ${session.session_id}, valid_until = ${validUntil},
-             status = 'authorized', auth_state = null,
-             aspsp_name = coalesce(${session.aspsp?.name ?? null}, aspsp_name),
-             aspsp_country = coalesce(${session.aspsp?.country ?? null}, aspsp_country)
-       where id = ${connectionId}`;
-    for (const acc of session.accounts ?? []) {
-      if (typeof acc !== "object" || !acc.identification_hash) continue;
-      const ledger = o.ledgerAccount(acc) ?? null;
-      const { iban, bban } = accountIdentifiers(acc);
-      const uid = acc.uid ?? null;
-      if (!ledger) {
-        accounts.push({ idHash: acc.identification_hash, uid, ledgerAccount: null, iban, bban });
-        continue;
+  try {
+    await sql.begin(async (tx) => {
+      const claimed = await tx`
+        update bank_connection
+           set session_id = ${session.session_id}, valid_until = ${validUntil},
+               status = 'authorized', auth_state = null,
+               aspsp_name = coalesce(${session.aspsp?.name ?? null}, aspsp_name),
+               aspsp_country = coalesce(${session.aspsp?.country ?? null}, aspsp_country)
+         where id = ${connectionId} and status = 'pending' and auth_state = ${o.state}
+         returning id`;
+      if (!claimed.length) {
+        throw new ConsentRaceError(`bank_connection ${connectionId} was completed by another caller`);
       }
-      const [existing] = await tx`select entity from bank_account where id_hash = ${acc.identification_hash}`;
-      if (existing && existing.entity !== entity) {
-        throw new Error(`bank account ${acc.identification_hash} already belongs to entity ${existing.entity}`);
+      for (const acc of session.accounts ?? []) {
+        if (typeof acc !== "object" || !acc.identification_hash) continue;
+        const ledger = o.ledgerAccount(acc) ?? null;
+        const { iban, bban } = accountIdentifiers(acc);
+        const uid = acc.uid ?? null;
+        if (!ledger) {
+          accounts.push({ idHash: acc.identification_hash, uid, ledgerAccount: null, iban, bban });
+          continue;
+        }
+        const [existing] = await tx`select entity from bank_account where id_hash = ${acc.identification_hash}`;
+        if (existing && existing.entity !== entity) {
+          throw new ConsentEntityError(
+            `bank account ${acc.identification_hash} already belongs to entity ${existing.entity}`,
+          );
+        }
+        // Identity hangs on identification_hash; uid and connection are refreshed
+        // on every consent. ledger_account is set once and kept.
+        await tx`
+          insert into bank_account (id_hash, entity, connection_id, uid, iban, bban, name, currency, ledger_account, raw)
+          values (${acc.identification_hash}, ${entity}, ${connectionId}, ${uid}, ${iban}, ${bban},
+                  ${acc.name ?? acc.product ?? acc.details ?? null}, ${acc.currency ?? "NOK"}, ${ledger}, ${acc as never}::jsonb)
+          on conflict (id_hash) do update
+             set connection_id = excluded.connection_id, uid = excluded.uid,
+                 iban = coalesce(excluded.iban, bank_account.iban),
+                 bban = coalesce(excluded.bban, bank_account.bban),
+                 name = coalesce(excluded.name, bank_account.name),
+                 currency = excluded.currency, raw = excluded.raw`;
+        accounts.push({ idHash: acc.identification_hash, uid, ledgerAccount: ledger, iban, bban });
       }
-      // Identity hangs on identification_hash; uid and connection are refreshed
-      // on every consent. ledger_account is set once and kept.
-      await tx`
-        insert into bank_account (id_hash, entity, connection_id, uid, iban, bban, name, currency, ledger_account, raw)
-        values (${acc.identification_hash}, ${entity}, ${connectionId}, ${uid}, ${iban}, ${bban},
-                ${acc.name ?? acc.product ?? acc.details ?? null}, ${acc.currency ?? "NOK"}, ${ledger}, ${acc as never}::jsonb)
-        on conflict (id_hash) do update
-           set connection_id = excluded.connection_id, uid = excluded.uid,
-               iban = coalesce(excluded.iban, bank_account.iban),
-               bban = coalesce(excluded.bban, bank_account.bban),
-               name = coalesce(excluded.name, bank_account.name),
-               currency = excluded.currency, raw = excluded.raw`;
-      accounts.push({ idHash: acc.identification_hash, uid, ledgerAccount: ledger, iban, bban });
+      const old = await tx`
+        update bank_connection c set status = 'superseded'
+         where c.entity = ${entity} and c.id <> ${connectionId} and c.status = 'authorized'
+           and not exists (select 1 from bank_account a where a.connection_id = c.id)
+         returning c.id`;
+      superseded = old.map((r: { id: number | string }) => Number(r.id));
+    });
+  } catch (e) {
+    if (e instanceof ConsentEntityError) {
+      // The session at Enable Banking is live; don't leave it dangling on a
+      // pending row that could be completed again. Record it and close it.
+      await sql`
+        update bank_connection
+           set status = 'revoked', session_id = ${session.session_id}, auth_state = null
+         where id = ${connectionId}`;
+      await client.deleteSession(session.session_id).catch(() => {});
     }
-  });
+    throw e;
+  }
 
   let backfill: SyncResult | null = null;
   if (!o.noBackfill) {
@@ -267,7 +343,14 @@ export async function completeConsent(
       onWarning: o.onWarning,
     });
   }
-  return { connectionId, sessionId: session.session_id, validUntil, accounts, backfill };
+  return { connectionId, sessionId: session.session_id, validUntil, accounts, superseded, backfill };
+}
+
+export class ConsentRaceError extends Error {
+  override name = "ConsentRaceError";
+}
+export class ConsentEntityError extends Error {
+  override name = "ConsentEntityError";
 }
 
 // ----- sync -----
@@ -298,20 +381,57 @@ function addDays(iso: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+type FetchOutcome = SyncOutcome | "error";
+
 async function logFetch(
   sql: SQL,
   connectionId: number,
   at: Date,
   attended: boolean,
-  outcome: SyncOutcome | "error",
-  detail?: string,
+  outcome: FetchOutcome,
+  detail: string,
+  warnings: string[] = [],
 ): Promise<void> {
+  const text = [detail, ...warnings].filter(Boolean).join("\n");
   await sql`
     insert into bank_fetch (connection_id, started_at, attended, outcome, detail)
-    values (${connectionId}, ${at}, ${attended}, ${outcome}, ${detail ?? null})`;
+    values (${connectionId}, ${at}, ${attended}, ${outcome}, ${text || null})`;
 }
 
-/** One fetch of every account on a consent. Never throws on 429 or an expired session. */
+/**
+ * Whether an unattended read may go to the bank now, and when it may if not.
+ * Budget: every run that reached the bank in the last 24 h (not deferred).
+ */
+async function unattendedWindow(
+  tx: SQL,
+  connectionId: number,
+  backoffUntil: Date | null,
+  now: Date,
+): Promise<{ allowed: true } | { allowed: false; resumeAt: Date; reason: string }> {
+  if (backoffUntil && backoffUntil > now) {
+    return { allowed: false, resumeAt: backoffUntil, reason: "rate-limit backoff" };
+  }
+  const [{ n, oldest }] = await tx`
+    select count(*)::int as n, min(started_at) as oldest
+      from bank_fetch
+     where connection_id = ${connectionId} and not attended
+       and outcome <> 'deferred'
+       and started_at > ${now}::timestamptz - interval '24 hours'`;
+  if (n >= MAX_UNATTENDED_PER_DAY) {
+    return {
+      allowed: false,
+      resumeAt: new Date(new Date(oldest).getTime() + 86400_000),
+      reason: `unattended budget (${MAX_UNATTENDED_PER_DAY}/day) spent: ${n} fetches in 24 h`,
+    };
+  }
+  return { allowed: true };
+}
+
+/**
+ * One fetch of every account on a consent, inside one transaction that holds
+ * the bank_connection row. Never throws on 429, refused PSU headers or an
+ * expired session; any other failure is logged (it still counts) and rethrown.
+ */
 export async function syncConnection(
   sql: SQL,
   client: EnableBankingClient,
@@ -328,94 +448,113 @@ export async function syncConnection(
   const attendedWanted = !!o.psu;
   const base = { connectionId, attended: attendedWanted, accounts: [] as AccountSyncResult[], warnings };
 
-  const [conn] = await sql`
-    select id, status, valid_until, last_synced_at, backoff_until
-      from bank_connection where id = ${connectionId}`;
-  if (!conn) throw new Error(`bank_connection ${connectionId} does not exist`);
-  if (conn.status !== "authorized") {
-    return { ...base, outcome: "expired", detail: `connection is ${conn.status}` };
-  }
-  if (conn.valid_until && new Date(conn.valid_until) <= now()) {
-    await sql`update bank_connection set status = 'expired' where id = ${connectionId}`;
-    await logFetch(sql, connectionId, now(), attendedWanted, "expired", "consent valid_until passed");
-    return { ...base, outcome: "expired", detail: "consent valid_until passed" };
-  }
-
-  if (!attendedWanted && !o.force) {
-    if (conn.backoff_until && new Date(conn.backoff_until) > now()) {
-      const resumeAt = new Date(conn.backoff_until);
-      await logFetch(sql, connectionId, now(), false, "deferred", `backoff until ${resumeAt.toISOString()}`);
-      return { ...base, outcome: "deferred", resumeAt, detail: "rate-limit backoff" };
+  let failure: unknown;
+  const result = (await sql.begin(async (t) => {
+    const tx = t as unknown as SQL;
+    const [conn] = await tx`
+      select id, status, valid_until, last_synced_at, backoff_until
+        from bank_connection where id = ${connectionId} for update`;
+    if (!conn) throw new Error(`bank_connection ${connectionId} does not exist`);
+    if (conn.status !== "authorized") {
+      return { ...base, outcome: "expired", detail: `connection is ${conn.status}` };
     }
-    const [{ n, oldest }] = await sql`
-      select count(*)::int as n, min(started_at) as oldest
-        from bank_fetch
-       where connection_id = ${connectionId} and not attended
-         and outcome in ('ok', 'rate_limited')
-         and started_at > ${now()}::timestamptz - interval '24 hours'`;
-    if (n >= MAX_UNATTENDED_PER_DAY) {
-      const resumeAt = new Date(new Date(oldest).getTime() + 86400_000);
-      await logFetch(sql, connectionId, now(), false, "deferred", `${n} unattended fetches in 24 h`);
-      return { ...base, outcome: "deferred", resumeAt, detail: `unattended budget (${MAX_UNATTENDED_PER_DAY}/day) spent` };
+    const t0 = now();
+    if (conn.valid_until && new Date(conn.valid_until) <= t0) {
+      await tx`update bank_connection set status = 'expired' where id = ${connectionId}`;
+      await logFetch(tx, connectionId, t0, attendedWanted, "expired", "consent valid_until passed");
+      return { ...base, outcome: "expired", detail: "consent valid_until passed" };
     }
-  }
 
-  const accounts = (await sql`
-    select id_hash, uid from bank_account
-     where connection_id = ${connectionId} and uid is not null
-     order by id_hash`) as { id_hash: string; uid: string }[];
+    const window = o.force
+      ? ({ allowed: true } as const)
+      : await unattendedWindow(tx, connectionId, conn.backoff_until ? new Date(conn.backoff_until) : null, t0);
+    if (!attendedWanted && !window.allowed) {
+      await logFetch(tx, connectionId, t0, false, "deferred", window.reason);
+      return { ...base, outcome: "deferred", resumeAt: window.resumeAt, detail: window.reason };
+    }
 
-  const dateTo = o.dateTo ?? today();
-  let dateFrom: string | undefined = o.dateFrom;
-  if (!dateFrom && !o.backfill) {
-    dateFrom = conn.last_synced_at
-      ? addDays(new Date(conn.last_synced_at).toISOString().slice(0, 10), -OVERLAP_DAYS)
-      : addDays(dateTo, -FALLBACK_HISTORY_DAYS);
-  }
+    const accounts = (await tx`
+      select id_hash, uid from bank_account
+       where connection_id = ${connectionId} and uid is not null
+       order by id_hash`) as { id_hash: string; uid: string }[];
 
-  let attended = attendedWanted;
-  const results: AccountSyncResult[] = [];
-  try {
-    for (const acc of accounts) {
-      const r = await syncAccount(sql, client, acc, {
-        psu: attended ? o.psu : undefined,
-        backfill: !!o.backfill,
-        dateFrom,
-        dateTo,
-        onWarning: warn,
-      });
-      if (r.psuRefused) {
-        attended = false;
-        warn(`account ${acc.id_hash}: PSU headers refused; continuing unattended`);
+    const dateTo = o.dateTo ?? today();
+    let dateFrom: string | undefined = o.dateFrom;
+    if (!dateFrom && !o.backfill) {
+      dateFrom = conn.last_synced_at
+        ? addDays(new Date(conn.last_synced_at).toISOString().slice(0, 10), -OVERLAP_DAYS)
+        : addDays(dateTo, -FALLBACK_HISTORY_DAYS);
+    }
+
+    let attended = attendedWanted;
+    const results: AccountSyncResult[] = [];
+    try {
+      for (const acc of accounts) {
+        const r = await syncAccount(tx, client, acc, {
+          psu: attended ? o.psu : undefined,
+          // falling back to an unattended read is itself an unattended fetch
+          psuFallback: window.allowed,
+          backfill: !!o.backfill,
+          dateFrom,
+          dateTo,
+          onWarning: warn,
+        });
+        if (r.psuRefused) {
+          attended = false;
+          warn(`account ${acc.id_hash}: PSU headers refused; continuing unattended`);
+        }
+        results.push(r.result);
       }
-      results.push(r.result);
+    } catch (e) {
+      if (e instanceof RateLimitedError) {
+        const seconds = Math.max(BACKOFF_SECONDS, e.retryAfterSeconds ?? 0);
+        const resumeAt = new Date(t0.getTime() + seconds * 1000);
+        await tx`update bank_connection set backoff_until = ${resumeAt} where id = ${connectionId}`;
+        await logFetch(tx, connectionId, t0, attended, "rate_limited", e.message, warnings);
+        return { ...base, attended, accounts: results, outcome: "rate_limited", resumeAt, detail: e.message };
+      }
+      if (e instanceof SessionExpiredError) {
+        await tx`update bank_connection set status = 'expired' where id = ${connectionId}`;
+        await logFetch(tx, connectionId, t0, attended, "expired", e.message, warnings);
+        return { ...base, attended, accounts: results, outcome: "expired", detail: e.message };
+      }
+      if (e instanceof EnableBankingError && e.code?.startsWith("PSU_HEADER_") && !window.allowed) {
+        // Enable Banking refused the attended read and the unattended budget
+        // or backoff forbids the fallback. Nothing reached the bank.
+        const reason = `PSU headers refused (${e.code}) and ${window.reason}`;
+        await logFetch(tx, connectionId, t0, true, "deferred", reason, warnings);
+        return { ...base, accounts: results, outcome: "deferred", resumeAt: window.resumeAt, detail: reason };
+      }
+      // Anything else reached the bank and counts against the budget. Log it
+      // inside the transaction and rethrow after commit.
+      await logFetch(tx, connectionId, t0, attended, "error", e instanceof Error ? e.message : String(e), warnings);
+      failure = e;
+      return undefined;
     }
-  } catch (e) {
-    if (e instanceof RateLimitedError) {
-      const seconds = Math.max(BACKOFF_SECONDS, e.retryAfterSeconds ?? 0);
-      const resumeAt = new Date(now().getTime() + seconds * 1000);
-      await sql`update bank_connection set backoff_until = ${resumeAt} where id = ${connectionId}`;
-      await logFetch(sql, connectionId, now(), attended, "rate_limited", e.message);
-      return { ...base, attended, accounts: results, outcome: "rate_limited", resumeAt, detail: e.message };
-    }
-    if (e instanceof SessionExpiredError) {
-      await sql`update bank_connection set status = 'expired' where id = ${connectionId}`;
-      await logFetch(sql, connectionId, now(), attended, "expired", e.message);
-      return { ...base, attended, accounts: results, outcome: "expired", detail: e.message };
-    }
-    await logFetch(sql, connectionId, now(), attended, "error", e instanceof Error ? e.message : String(e));
-    throw e;
-  }
 
-  await sql`
-    update bank_connection set last_synced_at = ${now()}, backoff_until = null
-     where id = ${connectionId}`;
-  await logFetch(sql, connectionId, now(), attended, "ok", `${results.length} accounts`);
-  return { ...base, attended, accounts: results, outcome: "ok" };
+    const truncated = results.some((r) => r.truncated);
+    if (truncated) {
+      warn("pagination was cut short; last_synced_at not advanced so the next run re-covers the window");
+      await tx`update bank_connection set backoff_until = null where id = ${connectionId}`;
+    } else {
+      await tx`
+        update bank_connection set last_synced_at = ${t0}, backoff_until = null
+         where id = ${connectionId}`;
+    }
+    const detail = results
+      .map((r) => `${r.idHash}: ${r.inserted} new of ${r.seen} booked, ${r.pending} pending, ${r.balances} balances, ${r.pages} pages` +
+        (r.conflicts ? `, ${r.conflicts} conflicts` : "") + (r.truncated ? ", truncated" : ""))
+      .join("\n");
+    await logFetch(tx, connectionId, t0, attended, "ok", detail || "no accounts", warnings);
+    return { ...base, attended, accounts: results, outcome: "ok" };
+  })) as SyncResult | undefined;
+  if (failure !== undefined) throw failure;
+  return result as SyncResult;
 }
 
 interface AccountSyncOptions {
   psu?: PsuContext;
+  psuFallback: boolean;
   backfill: boolean;
   dateFrom?: string;
   dateTo: string;
@@ -424,9 +563,9 @@ interface AccountSyncOptions {
 
 const PENDING_STATUSES = new Set(["PDNG", "HOLD", "SCHD"]);
 
-/** Fetches one account and writes the facts in a single transaction. */
+/** Fetches one account and writes the facts on `tx`. */
 export async function syncAccount(
-  sql: SQL,
+  tx: SQL,
   client: EnableBankingClient,
   acc: { id_hash: string; uid: string },
   o: AccountSyncOptions,
@@ -434,31 +573,36 @@ export async function syncAccount(
   let psuRefused = false;
   let psu = o.psu;
   let dateFrom = o.dateFrom;
+  const copts = { psu, psuFallback: o.psuFallback, onWarning: o.onWarning };
   let fetched;
   if (o.backfill) {
     try {
-      fetched = await client.transactions(acc.uid, { strategy: "longest" }, { psu, onWarning: o.onWarning });
+      fetched = await client.transactions(acc.uid, { strategy: "longest" }, copts);
     } catch (e) {
       if (!(e instanceof EnableBankingError) || e.code !== "WRONG_TRANSACTIONS_PERIOD") throw e;
       dateFrom = addDays(o.dateTo, -FALLBACK_HISTORY_DAYS);
       o.onWarning(`account ${acc.id_hash}: bank refused the longest history; fetching ${dateFrom}..${o.dateTo}`);
-      fetched = await client.transactions(acc.uid, { dateFrom, dateTo: o.dateTo }, { psu, onWarning: o.onWarning });
+      fetched = await client.transactions(acc.uid, { dateFrom, dateTo: o.dateTo }, copts);
     }
   } else {
-    fetched = await client.transactions(acc.uid, { dateFrom, dateTo: o.dateTo }, { psu, onWarning: o.onWarning });
+    fetched = await client.transactions(acc.uid, { dateFrom, dateTo: o.dateTo }, copts);
   }
   if (fetched.psuRefused) {
     psuRefused = true;
     psu = undefined;
   }
-  const balances = await client.balances(acc.uid, psu);
+  const balances = await client.balances(acc.uid, psu, o.psuFallback);
   if (balances.psuRefused) psuRefused = true;
 
-  const result = await sql.begin(async (tx) =>
-    storeAccount(tx as unknown as SQL, acc.id_hash, fetched.transactions, balances.data, o.onWarning),
-  ) as AccountSyncResult;
+  const result = await storeAccount(tx, acc.id_hash, fetched.transactions, balances.data, o.onWarning);
   return {
-    result: { ...result, pages: fetched.pages, dateFrom: o.backfill && !dateFrom ? null : dateFrom ?? null, dateTo: o.dateTo },
+    result: {
+      ...result,
+      pages: fetched.pages,
+      truncated: fetched.truncated,
+      dateFrom: o.backfill && !dateFrom ? null : dateFrom ?? null,
+      dateTo: o.dateTo,
+    },
     psuRefused,
   };
 }
@@ -473,24 +617,32 @@ export async function storeAccount(
 ): Promise<AccountSyncResult> {
   const r: AccountSyncResult = {
     idHash, seen: 0, inserted: 0, conflicts: 0, pending: 0, ignored: 0, balances: 0,
-    pages: 0, dateFrom: null, dateTo: null,
+    pages: 0, truncated: false, dateFrom: null, dateTo: null,
   };
   const pending: Transaction[] = [];
-  const seenKeys = new Map<string, number>();
+  const booked: Transaction[] = [];
   for (const t of transactions) {
     const status = (t.status ?? "BOOK").toUpperCase();
-    if (status !== "BOOK") {
-      if (PENDING_STATUSES.has(status)) pending.push(t);
-      else r.ignored++;
-      continue;
-    }
-    r.seen++;
-    const key = dedupKey(t);
+    if (status === "BOOK") booked.push(t);
+    else if (PENDING_STATUSES.has(status)) pending.push(t);
+    else r.ignored++;
+  }
+  r.seen = booked.length;
+
+  const keys = dedupKeys(booked);
+  const seenKeys = new Map<string, number>();
+  for (let i = 0; i < booked.length; i++) {
+    const t = booked[i]!;
+    const key = keys[i]!;
     const amount = transactionOre(t);
     const prior = seenKeys.get(key);
     if (prior !== undefined) {
-      if (prior !== amount) r.conflicts++;
-      continue; // the bank sent the same entry twice in one window
+      // the bank sent the same entry_reference twice in one window
+      if (prior !== amount) {
+        r.conflicts++;
+        onWarning(`account ${idHash}: entry_reference ${key} seen twice in one window with amounts ${prior} and ${amount}`);
+      }
+      continue;
     }
     seenKeys.set(key, amount);
     const rows = await tx`
@@ -524,15 +676,18 @@ export async function storeAccount(
   }
   r.pending = pending.length;
 
-  for (const b of balances) {
+  // Every balance the bank returned is kept, in the bank's order: fetched_at
+  // (part of the key) is the transaction's now() plus the position, so two
+  // CLBD rows in one answer both land and bank_reconciliation picks the later.
+  for (let i = 0; i < balances.length; i++) {
+    const b = balances[i]!;
     if (!b.balance_type || !b.balance_amount?.amount) continue;
-    const rows = await tx`
-      insert into bank_balance (id_hash, balance_type, reference_date, amount, raw)
+    await tx`
+      insert into bank_balance (id_hash, balance_type, reference_date, amount, raw, fetched_at)
       values (${idHash}, ${b.balance_type}, ${dateOrNull(b.reference_date)},
-              ${oreFromDecimal(b.balance_amount.amount)}, ${b as never}::jsonb)
-      on conflict do nothing
-      returning balance_type`;
-    r.balances += rows.length;
+              ${oreFromDecimal(b.balance_amount.amount)}, ${b as never}::jsonb,
+              now() + ${i} * interval '1 microsecond')`;
+    r.balances++;
   }
   return r;
 }

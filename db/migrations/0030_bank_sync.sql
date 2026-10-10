@@ -5,16 +5,23 @@
 -- Matching goes through commands (match_bank / unmatch_bank), ADR-0009 style,
 -- rather than direct DML on `match`: a command is the one place that resolves
 -- the voucher line (the line on the bank's own 19xx account) and names the
--- rule when it refuses. The 0008 insert/delete grant on `match` stays; the
--- strengthened trigger below is the backstop for both paths.
+-- rule when it refuses. There are three ways a match row can arrive —
+-- match_bank, post_voucher's "matches" array (0006), and the direct insert
+-- 0008 grants hovedbok_app — and the strengthened trigger below is the
+-- backstop for all of them.
 
 -- --------------------------------------------------------------------------
 -- Consent state: where the sync left off, the CSRF state of a pending
 -- authorization, and the earliest time an unattended fetch may run again.
+-- 'superseded': a later consent took over every account of this one, so the
+-- scheduler leaves it alone (the session may still be live at the bank).
 alter table bank_connection
   add column auth_state     text unique,
   add column last_synced_at timestamptz,
-  add column backoff_until  timestamptz;
+  add column backoff_until  timestamptz,
+  drop constraint bank_connection_status_check,
+  add constraint bank_connection_status_check
+    check (status in ('pending', 'authorized', 'expired', 'revoked', 'superseded'));
 
 -- --------------------------------------------------------------------------
 -- Fetch log: one row per sync run per consent. A run reads transactions and
