@@ -83,6 +83,8 @@ function expand(r: Row): Line[] {
   const counterparty = col(r, "motpart_id");
   const base: Line = { account: col(r, "konto"), amount: net, description: d, party: party(col(r, "konto"), counterparty) };
   if (code) Object.assign(base, { vat_code: code, vat_base: net });
+  // ADR-0012: a VAT amount stated on the document (bilag.csv mva_belop) is stated on the base line too
+  if (code && parseOreOrNull(col(r, "mva_belop")) !== null) Object.assign(base, { vat_amount: vat });
   const out: Line[] = [base];
   if (vat !== 0 && mva?.account) out.push({ account: mva.account, amount: vat, description: d });
   out.push({ account: col(r, "motkonto"), amount: gross, description: d, party: party(col(r, "motkonto"), counterparty) });
@@ -196,6 +198,10 @@ describe("golden fixture (enkelt-regnskap, 4. termin 2026)", () => {
     expect(out.entries).toBe(29);
     const reference = await Bun.file(REFERENCE).text();
     expect(normalise(out.xml)).toBe(normalise(reference));
+    // the Vendor Ltd line carries the invoice's VAT (1 052,64 where 25 % derives 1 052,55): stated, ADR-0012
+    const [stated] = await sql`select vat_amount::int as v from posting where entity = ${E} and year = 2026 and nr = 18 and line = 1`;
+    expect(stated.v).toBe(105264);
+    expect(out.xml).toContain("<TaxBase>4210.20</TaxBase>\n            <DebitTaxAmount>\n              <Amount>1052.64</Amount>");
   });
 
   withXmllint("the export validates against the v1.30 XSD", async () => {
@@ -253,6 +259,15 @@ describe("v1.40 switch: foreign currency, NOK tax amounts, owners", () => {
         { account: "1920", amount: -833 },
       ],
     }}::jsonb)`;
+    // a stated vat_amount wins over the booked 27xx line (ADR-0012)
+    await sql`select post_voucher(${{
+      entity: E, posting_date: "2026-09-11", description: "Oppgitt mva", idempotency_key: "sep:stated",
+      lines: [
+        { account: "6550", amount: 1000, vat_code: "1", vat_base: 1000, vat_amount: 251 },
+        { account: "2710", amount: 250 },
+        { account: "1920", amount: -1250 },
+      ],
+    }}::jsonb)`;
     // an owner withdrawal against 2050, tagged with the owner
     await sql`select post_voucher(${{
       entity: E, posting_date: "2026-09-12", description: "Privat uttak", idempotency_key: "sep:owner",
@@ -274,7 +289,7 @@ describe("v1.40 switch: foreign currency, NOK tax amounts, owners", () => {
     expect(xml).toContain("<OwnerID>E1</OwnerID>\n        <AccountID>2050</AccountID>");
     // split: 333 × 25 % = 83.25 -> 83 on the first line, 167 − 83 = 84 on the last
     const amounts = [...xml.matchAll(/<DebitTaxAmount>\s*<Amount>([\d.]+)<\/Amount>/g)].map((m) => m[1]);
-    expect(amounts).toEqual(["275.00", "0.83", "0.84"]);
+    expect(amounts).toEqual(["275.00", "0.83", "0.84", "2.51"]);
     if (XMLLINT) await validate(xml, "1.30");
   });
 
@@ -295,7 +310,7 @@ describe("v1.40 switch: foreign currency, NOK tax amounts, owners", () => {
   test("opening balances carry across periods; a later period leaves the golden period's figures alone", async () => {
     const { xml } = await buildSaft(sql, { entity: E, ...SEP, company: company() });
     expect(xml).toContain("<AccountID>1920</AccountID>\n        <AccountDescription>Bank brukskonto 1234.56.78901 (næring)</AccountDescription>\n        <GroupingCategory>balanseverdiForOmloepsmiddel</GroupingCategory>\n        <GroupingCode>1920</GroupingCode>\n        <AccountType>GL</AccountType>\n        <OpeningDebitBalance>61573.75</OpeningDebitBalance>");
-    expect(xml).toContain("<NumberOfEntries>3</NumberOfEntries>");
+    expect(xml).toContain("<NumberOfEntries>4</NumberOfEntries>");
     // master data (the new owner) is period-independent; the ledger section is not
     const golden = await buildSaft(sql, { entity: E, from: FROM, to: TO, now: NOW, company: company() });
     const reference = await Bun.file(REFERENCE).text();

@@ -263,6 +263,7 @@ interface LineRow {
   ccy_rate: string | null;
   vat_code: string | null;
   vat_base: string | null;
+  vat_amount: string | null;
   party: string | null;
   line_description: string;
   control: "customer" | "supplier" | null;
@@ -299,18 +300,15 @@ function rateAt(rates: RateRow[], code: string, date: string): string {
 }
 
 /**
- * Tax amount per coded line of a voucher (ADR-0011: the code sits on the base
- * line, the VAT itself on a 27xx line). Single-effect codes (input/output)
- * take the VAT booked on the voucher's VAT accounts that default to the code:
- * one coded line gets it whole, several get base × rate each with the
- * rounding remainder on the last, so the lines add up to what was booked.
- * Codes with no booked VAT in the voucher (code 0, zero rate, both-effect
- * regimes) are base × rate, half up.
- *
- * ADR-0012 (posting.vat_amount, migration 0026 on a parallel branch): once the
- * column exists, a stated vat_amount on the line takes precedence over both
- * (stated, else booked-attributed, else derived) — add it to the journal
- * select and read it first here; nothing else changes.
+ * Tax amount per coded line of a voucher: stated, else booked-attributed,
+ * else derived (ADR-0011, ADR-0012). The code sits on the base line, the VAT
+ * itself on a 27xx line. A line with vat_amount (the figure on the source
+ * document) reports that. Otherwise, single-effect codes (input/output) take
+ * the VAT booked on the voucher's VAT accounts that default to the code: one
+ * coded line gets it whole, several get base × rate each with the rounding
+ * remainder on the last, so the lines add up to what was booked. Codes with
+ * no booked VAT in the voucher (code 0, zero rate, both-effect regimes) are
+ * base × rate, half up.
  */
 function taxAmounts(v: Voucher, rates: RateRow[]): Map<number, number> {
   const out = new Map<number, number>();
@@ -332,7 +330,7 @@ function taxAmounts(v: Voucher, rates: RateRow[]): Map<number, number> {
       if (derived.length === 1) derived[0] = b;
       else derived[derived.length - 1] = (derived[derived.length - 1] ?? 0) + b - derived.reduce((a, d) => a + d, 0);
     }
-    lines.forEach((l, i) => out.set(l.line, derived[i] ?? 0));
+    lines.forEach((l, i) => out.set(l.line, l.vat_amount !== null ? ore(l.vat_amount) : derived[i] ?? 0));
   }
   return out;
 }
@@ -421,7 +419,7 @@ export async function buildSaft(sql: SQL, opts: SaftOptions): Promise<SaftExport
     select j.year, j.nr, j.period, j.posting_date::text, j.document_date::text,
            j.voucher_description, j.external_ref, j.created_at,
            j.line, j.account, j.amount::text, j.ccy, j.ccy_amount::text, j.ccy_rate::text,
-           j.vat_code, j.vat_base::text, j.party, j.line_description,
+           j.vat_code, j.vat_base::text, j.vat_amount::text, j.party, j.line_description,
            a.control, s.vat_side, s.default_vat, c.kind
       from journal j
       join account a on a.entity = j.entity and a.code = j.account
