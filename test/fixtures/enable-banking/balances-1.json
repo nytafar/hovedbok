@@ -1,0 +1,18 @@
+{
+  "balances": [
+    {
+      "name": "Bokført saldo",
+      "balance_amount": { "currency": "NOK", "amount": "56184.50" },
+      "balance_type": "CLBD",
+      "last_change_date_time": "2026-10-02T09:12:00Z",
+      "reference_date": "2026-10-03",
+      "last_committed_transaction": "2026100200004"
+    },
+    {
+      "name": "Disponibelt",
+      "balance_amount": { "currency": "NOK", "amount": "56184.50" },
+      "balance_type": "XPCD",
+      "reference_date": "2026-10-03"
+    }
+  ]
+}

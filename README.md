@@ -52,6 +52,42 @@ differs. In a voucher that touches a VAT account every P&L line must carry a
 code (`"0"` when it is genuinely outside VAT). The database refuses the other
 shapes.
 
+## Enable Banking
+
+`src/bank/` pulls the bank statement in through Enable Banking's AIS API and
+writes the facts into `bank_transaction` / `bank_balance` (BOOK only, keyed by
+`entry_reference` or a content fingerprint; pending movements live in a
+replaceable snapshot). Linking facts to vouchers goes through the
+`match_bank` / `unmatch_bank` commands; `unmatched_bank` is the queue and
+`bank_reconciliation` the assertion.
+
+Environment (an application registered in the Enable Banking Control Panel;
+see `~/hvelv/repos/hovedbok/howto-enable-banking-consent.md`):
+
+| variable | meaning |
+|---|---|
+| `ENABLE_BANKING_APP_ID` | application id from the Control Panel (the JWT `kid`) |
+| `ENABLE_BANKING_KEY_FILE` | path to the application's RSA private key, PEM |
+| `ENABLE_BANKING_REDIRECT_URL` | a redirect URL registered on the application; the consent callback lands here with `?code&state` |
+| `ENABLE_BANKING_API_URL` | optional, default `https://api.enablebanking.com` |
+
+```sh
+bun src/bank/cli.ts aspsps NO                       # banks and their max consent
+bun src/bank/cli.ts auth 999888777 "DNB"            # prints the bank's URL; open it, log in with BankID
+bun src/bank/cli.ts callback "<url you landed on>"  # POST /sessions, records accounts, backfills
+bun src/bank/cli.ts sync                            # unattended re-sync of every authorized consent
+bun src/bank/cli.ts status
+```
+
+Rules the sync enforces (from `research-enable-banking.md`): at most 4
+unattended fetches per consent per rolling 24 h (a 5th is deferred, logged in
+`bank_fetch`); a 429 puts the consent on a 6 h backoff (longer if the bank
+says so); a sync a human triggered sends the `Psu-*` headers all-or-none and
+is not budgeted; the backfill runs immediately after consent, attended when
+the browser context is known. Re-syncing an overlapping window never inserts a
+fact twice. Account identity is `identification_hash`; re-consent refreshes
+`uid` and the connection, keeps the account and its facts.
+
 ## Layout
 
 - `db/migrations/` — the system: schema, invariants, commands, views

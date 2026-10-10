@@ -1,0 +1,68 @@
+{
+  "transactions": [
+    {
+      "entry_reference": null,
+      "transaction_amount": { "currency": "NOK", "amount": "75.00" },
+      "creditor": { "name": "Mock ASPSP" },
+      "credit_debit_indicator": "DBIT",
+      "status": "BOOK",
+      "booking_date": "2026-09-30",
+      "value_date": "2026-09-30",
+      "balance_after_transaction": { "currency": "NOK", "amount": "57435.00" },
+      "remittance_information": ["Gebyr nettbank bedrift"],
+      "bank_transaction_code": { "description": "Gebyr", "code": "315" },
+      "transaction_id": "tx-b3"
+    },
+    {
+      "entry_reference": "2026100200004",
+      "transaction_amount": { "currency": "NOK", "amount": "1250.50" },
+      "creditor": { "name": "Telenor Norge AS" },
+      "credit_debit_indicator": "DBIT",
+      "status": "BOOK",
+      "booking_date": "2026-10-02",
+      "value_date": "2026-10-02",
+      "balance_after_transaction": { "currency": "NOK", "amount": "56184.50" },
+      "reference_number": "9870000000011",
+      "reference_number_schema": "NORF",
+      "remittance_information": [],
+      "transaction_id": "tx-b4"
+    },
+    {
+      "entry_reference": "2026100200004",
+      "transaction_amount": { "currency": "NOK", "amount": "1250.50" },
+      "creditor": { "name": "Telenor Norge AS" },
+      "credit_debit_indicator": "DBIT",
+      "status": "BOOK",
+      "booking_date": "2026-10-02",
+      "value_date": "2026-10-02",
+      "balance_after_transaction": { "currency": "NOK", "amount": "56184.50" },
+      "reference_number": "9870000000011",
+      "reference_number_schema": "NORF",
+      "remittance_information": [],
+      "transaction_id": "tx-b4-dup"
+    },
+    {
+      "entry_reference": "2026100900005",
+      "transaction_amount": { "currency": "NOK", "amount": "8000.00" },
+      "debtor": { "name": "Kunde AS" },
+      "debtor_account": { "iban": "NO4312345678903" },
+      "credit_debit_indicator": "CRDT",
+      "status": "BOOK",
+      "booking_date": "2026-10-09",
+      "value_date": "2026-10-09",
+      "balance_after_transaction": { "currency": "NOK", "amount": "64184.50" },
+      "remittance_information": ["Faktura 2026-17"],
+      "transaction_id": "tx-b5"
+    },
+    {
+      "transaction_amount": { "currency": "NOK", "amount": "349.00" },
+      "creditor": { "name": "Vinmonopolet" },
+      "credit_debit_indicator": "DBIT",
+      "status": "PDNG",
+      "transaction_date": "2026-10-10",
+      "remittance_information": ["Varekjøp 10.10 VINMONOPOLET OSLO"],
+      "transaction_id": "tx-b6"
+    }
+  ],
+  "continuation_key": null
+}
