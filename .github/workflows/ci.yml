@@ -29,6 +29,8 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.x
+      # xmllint validates the SAF-T export against Skatteetaten's XSD (test/saft.test.ts)
+      - run: sudo apt-get install -y --no-install-recommends libxml2-utils
       - run: bun install --frozen-lockfile
       - run: bun run migrate
       - run: bun run check

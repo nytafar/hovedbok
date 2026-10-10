@@ -1,0 +1,31 @@
+bilagsnr;dato;beskrivelse;motpart_id;konto;belop_inkl_mva;mva_kode;motkonto;mva_belop;referanse;dokument
+1;2026-07-01;Privat uttak: DAGLIGVARE LILLEBY (Visa varekjøp/uttak);;2050;-219.20;;1921;;;
+2;2026-07-01;Leverandørfaktura 1001 Matgrossisten AS - råvarer;L002;4300;-3000.00;11;2400;;1001;kjop/matgrossisten_1001.pdf
+3;2026-07-03;Betaling leverandørfaktura 1001 Matgrossisten AS;L002;2400;-3000.00;;1920;;1001;
+4;2026-07-06;Nærbutikken Lilleby - råvarer;L010;4300;-179.70;11;1921;;;kjop/narbutikken_2026-07-06.jpg
+5;2026-07-08;Dekorasjon arrangement - BLOMSTERBUTIKKEN LILLEBY;;6560;-450.00;1;1921;;;MANGLER KVITTERING (mva-kode antatt)
+6;2026-07-10;Overføring mellom egne kontoer 1920 -> 1921;;1921;-5000.00;;1920;;;
+7;2026-07-12;Privat uttak: BENSINSTASJON LILLEBY (Visa varekjøp/uttak);;2050;-650.00;;1921;;;
+8;2026-07-15;Kortsalg 2026-07-15 (kortterminal);L009;3000;10000.00;3;1580;;;kortterminal/oppgjor_2026-07-17.pdf
+9;2026-07-15;Privat uttak: STRØMMETJENESTE (Visa varekjøp/uttak);;2050;-99.00;;1921;;;
+10;2026-07-15;Privat uttak: STRØMMETJENESTE (Visa varekjøp/uttak);;2050;-99.00;;1921;;;
+11;2026-07-17;Kortoppgjør 2026-07-17 utbetaling;L009;1580;9800.00;;1920;;;kortterminal/oppgjor_2026-07-17.pdf
+11;2026-07-17;Kortgebyr for oppgjør 2026-07-17;L009;7770;-200.00;0;1580;;;kortterminal/oppgjor_2026-07-17.pdf
+12;2026-07-21;Faktura 1007 Fjellheim Kulturlag;K001;3000;2270.00;3;1500;;1007;salg/faktura_1007.pdf
+13;2026-07-22;Engangsartikler - DAGLIGVARE LILLEBY;;6550;-312.50;1;1921;;;MANGLER KVITTERING (mva-kode antatt)
+14;2026-07-27;Faktura 1008 Eksempel AS;K002;3000;30261.25;3;1500;;1008;salg/faktura_1008.pdf
+15;2026-07-29;Innbetaling faktura 1008 Eksempel AS;K002;1500;30261.25;;1920;;1008;
+16;2026-08-02;Privat uttak: PARKERING LILLEBY (Visa varekjøp/uttak);;2050;-30.00;;1921;;;
+17;2026-08-02;Privat uttak: PARKERING LILLEBY (Visa varekjøp/uttak);;2050;-30.00;;1921;;;
+18;2026-08-05;Vendor Ltd kjøkkenutstyr;L001;6540;-5262.84;1;1921;1052.64;;kjop/vendor_ltd_12345.pdf
+19;2026-08-10;Nærbutikken Lilleby - råvarer;L010;4300;-845.30;11;1921;;;MANGLER KVITTERING (mva-kode antatt)
+20;2026-08-12;Privat uttak: BUSS LILLEBY (Visa varekjøp/uttak);;2050;-40.00;;1921;;;
+21;2026-08-12;Privat uttak: BUSS LILLEBY (Visa varekjøp/uttak);;2050;-40.00;;1921;;;
+22;2026-08-12;Privat uttak: BUSS LILLEBY (Visa varekjøp/uttak);;2050;-40.00;;1921;;;
+23;2026-08-18;Bankgebyr;;7770;-45.00;0;1920;;;
+24;2026-08-21;Innbetaling faktura 1007 Fjellheim Kulturlag;K001;1500;2270.00;;1920;;1007;
+25;2026-08-25;Nærbutikken Lilleby - råvarer;L010;4300;-1278.40;11;1921;;;kjop/narbutikken_2026-08-25.jpg
+26;2026-08-28;Faktura 1009 Eksempel AS;K002;3000;29557.50;3;1500;;1009;salg/faktura_1009.pdf
+27;2026-08-28;Overføring mellom egne kontoer 1920 -> 1921;;1921;-2270.00;;1920;;;
+28;2026-08-31;Innbetaling faktura 1009 Eksempel AS;K002;1500;29557.50;;1920;;1009;
+29;2026-08-31;Privat uttak: DAGLIGVARE LILLEBY (Visa varekjøp/uttak);;2050;-199.10;;1921;;;

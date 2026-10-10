@@ -1,0 +1,16 @@
+konto;navn;gruppe_kategori;gruppe_kode;ib
+1500;Kundefordringer;balanseverdiForOmloepsmiddel;1500;0.00
+1580;Oppgjørskonto kortterminal;balanseverdiForOmloepsmiddel;1570;0.00
+1920;Bank brukskonto 1234.56.78901 (næring);balanseverdiForOmloepsmiddel;1920;0.00
+1921;Bank brukskonto 9876.54.32109 (blandet privat/næring);balanseverdiForOmloepsmiddel;1920;0.00
+2050;Privat uttak/innskudd (eier);egenkapital;2050;0.00
+2400;Leverandørgjeld;kortsiktigGjeld;2400;0.00
+2700;Utgående merverdiavgift;kortsiktigGjeld;2740;0.00
+2710;Inngående merverdiavgift, alminnelig sats 25 %;kortsiktigGjeld;2740;0.00
+2711;Inngående merverdiavgift, middels sats 15 %;kortsiktigGjeld;2740;0.00
+3000;Salgsinntekt catering/produksjon, avgiftspliktig 25 %;salgsinntekt;3000;0.00
+4300;Innkjøp råvarer/matvarer;varekostnad;4005;0.00
+6540;Inventar og utstyr (kostnadsført direkte);annenDriftskostnad;6500;0.00
+6550;Driftsmateriale, renhold og engangsartikler;annenDriftskostnad;7700;0.00
+6560;Dekorasjon/rekvisita til arrangement;annenDriftskostnad;7700;0.00
+7770;Bank- og kortgebyrer;annenDriftskostnad;7700;0.00
