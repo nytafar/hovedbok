@@ -36,7 +36,18 @@ select post_voucher('{
 select * from journal;
 select * from unmatched_bank;   -- the agent work queue
 select * from bank_reconciliation;
+
+-- reference data and year-end, the same way
+select upsert_party('{"entity": "999888777", "id": "K0001", "name": "Kunde AS", "customer": true}');
+select upsert_account('{"entity": "999888777", "code": "1921", "name": "Sparekonto", "std_account": "1920"}');
+select close_period('999888777', 2026, 1);           -- ... through 12, then
+select close_fiscal_year('999888777', 2026);         -- result -> 8800 -> 896x/899x -> equity, in period 13
+select * from account_year_balance where year = 2027; -- opening balances, derived from the postings
 ```
+
+VAT lines follow the convention above: the code on both the base line and the
+VAT-account line, `vat_base` on the base line only. The database refuses the
+other shapes.
 
 ## Layout
 

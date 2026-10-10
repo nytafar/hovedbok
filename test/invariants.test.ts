@@ -22,6 +22,7 @@ async function seed(db: SQL): Promise<void> {
   await db`
     insert into account (entity, code, name, std_account, control) values
       (${E}, '1920', 'Bank', '1920', null),
+      (${E}, '1900', 'Kontanter', '1900', null),
       (${E}, '3000', 'Salgsinntekt', '3000', null),
       (${E}, '2700', 'Utgående mva', '2700', null),
       (${E}, '1500', 'Kundefordringer', '1500', 'customer'),
@@ -311,10 +312,11 @@ describe("idempotency on (entity, idempotency_key)", () => {
 
 // ---------------------------------------------------------------------------
 describe("reversals", () => {
+  // the README convention (0013 enforces it): code on both lines, base on the revenue line
   const vatLines: Line[] = [
     { account: "1500", amount: 12500, party: "K1" },
-    { account: "3000", amount: -10000 },
-    { account: "2700", amount: -2500, vat_code: "3", vat_base: -10000 },
+    { account: "3000", amount: -10000, vat_code: "3", vat_base: -10000 },
+    { account: "2700", amount: -2500, vat_code: "3" },
   ];
 
   test("reverse_voucher posts the exact negation, idempotently", async () => {
@@ -337,8 +339,8 @@ describe("reversals", () => {
     await post(sql, voucher("orig"));
     const tampered: [string, number][][] = [
       [["1920", -12000], ["3000", 12000]], // wrong amounts, still balanced
-      [["2700", -12500], ["3000", 12500]], // wrong account
-      [["1920", -12500], ["3000", 12500], ["2700", 1], ["2700", -1]], // extra lines
+      [["1900", -12500], ["3000", 12500]], // wrong account
+      [["1920", -12500], ["3000", 12500], ["1900", 1], ["1900", -1]], // extra lines
     ];
     for (const lines of tampered) {
       const err = await pgError(
@@ -362,8 +364,8 @@ describe("reversals", () => {
     await post(sql, voucher("orig", { lines: vatLines }));
     const bad = [
       { ...vatLines[0]!, amount: -12500, party: undefined as string | undefined },
-      { ...vatLines[1]!, amount: 10000 },
-      { ...vatLines[2]!, amount: 2500, vat_base: 9999 },
+      { ...vatLines[1]!, amount: 10000, vat_base: 9999 },
+      { ...vatLines[2]!, amount: 2500 },
     ];
     // vat_base off by one
     let err = await pgError(
@@ -378,7 +380,7 @@ describe("reversals", () => {
     err = await pgError(
       post(sql, voucher("rev-party", {
         reverses: { year: Y, nr: 1 },
-        lines: [{ ...bad[0], party: "K2" }, bad[1], { ...bad[2], vat_base: 10000 }],
+        lines: [{ ...bad[0], party: "K2" }, { ...bad[1], vat_base: 10000 }, bad[2]],
       })),
     );
     expect(err.message).toContain("does not exactly negate");
@@ -490,7 +492,7 @@ describe("line checks", () => {
         posting_date: date,
         lines: [
           { account: "1920", amount: 2500 },
-          { account: "2700", amount: -2500, vat_code: code, vat_base: -10000 },
+          { account: "2700", amount: -2500, vat_code: code },
         ],
       });
     const err = await pgError(post(sql, line("99", "2026-06-30", "early")));
@@ -511,6 +513,9 @@ describe("the role wall", () => {
     `select post_voucher('${JSON.stringify(voucher("ro"))}'::jsonb)`,
     "select reverse_voucher('999888777', 2026::smallint, 1, '2026-02-01')",
     "select close_period('999888777', 2026::smallint, 2::smallint)",
+    "select close_fiscal_year('999888777', 2026::smallint)",
+    `select upsert_account('{"entity": "999888777", "code": "1921", "name": "x", "std_account": "1920"}'::jsonb)`,
+    `select upsert_party('{"entity": "999888777", "id": "K9", "name": "x"}'::jsonb)`,
   ];
 
   async function relations(): Promise<string[]> {
