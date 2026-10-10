@@ -1,0 +1,15 @@
+# Dev database. Port 5433 to stay clear of shared-postgres on 5432.
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: hovedbok
+      POSTGRES_PASSWORD: hovedbok
+      POSTGRES_DB: hovedbok
+    ports:
+      - "5433:5432"
+    volumes:
+      - hovedbok-db:/var/lib/postgresql/data
+
+volumes:
+  hovedbok-db:

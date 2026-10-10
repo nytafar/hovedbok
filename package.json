@@ -1,0 +1,13 @@
+{
+  "name": "hovedbok",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "migrate": "bun db/migrate.ts",
+    "check": "bunx tsc --noEmit && bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.0",
+    "typescript": "^5.7.0"
+  }
+}
