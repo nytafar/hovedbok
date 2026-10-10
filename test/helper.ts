@@ -83,15 +83,36 @@ async function buildTemplate(): Promise<string> {
 
       // Housekeeping: templates for older migration sets, and test databases
       // left behind by processes that no longer exist on this host.
+      // Templates are only dropped when stale (registered > 2 h ago): parallel
+      // runs from checkouts with different migration sets (e.g. a worktree)
+      // each have a live template, and dropping by hash alone killed the
+      // other run mid-flight.
+      await admin.unsafe(
+        `create table if not exists _tpl_registry
+           (datname text primary key, created_at timestamptz not null default now())`,
+      );
+      await admin`
+        insert into _tpl_registry (datname) values (${tpl})
+        on conflict (datname) do update set created_at = now()`;
+      // Adopt templates the registry doesn't know (crashed before registering),
+      // so they age out on later runs instead of living forever.
+      await admin`
+        insert into _tpl_registry (datname)
+        select datname from pg_database where starts_with(datname, ${templatePrefix})
+        on conflict (datname) do nothing`;
       const stale = await admin`
-        select datname from pg_database
-         where (starts_with(datname, ${templatePrefix}) and datname <> ${tpl})
-            or starts_with(datname, ${testPrefix})`;
+        select d.datname from pg_database d
+          join _tpl_registry r on r.datname = d.datname
+         where (starts_with(d.datname, ${templatePrefix}) and d.datname <> ${tpl}
+                and r.created_at < now() - interval '2 hours')
+        union
+        select datname from pg_database where starts_with(datname, ${testPrefix})`;
       for (const { datname } of stale as { datname: string }[]) {
         if (datname.startsWith(testPrefix) && pidAlive(datname.slice(testPrefix.length))) {
           continue;
         }
         await dropDatabase(admin, datname);
+        await admin`delete from _tpl_registry where datname = ${datname}`;
       }
     } finally {
       await admin`select pg_advisory_unlock(hashtext(${templatePrefix}))`;
