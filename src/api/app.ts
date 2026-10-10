@@ -14,13 +14,25 @@
 // connection whose login is a member of hovedbok_app; the read-only token runs
 // on a hovedbok_ro connection and gets GET/HEAD only. /openapi.json and the
 // bank consent callback (a browser redirect from the bank, authenticated by
-// its `state` in #10) take no token.
+// its `state` inside completeConsent) take no token; the callback runs on the
+// read-write connection.
+//
+// Enable Banking (#10): the bank routes call src/bank/sync.ts as the CLI does.
+// The client is built on the first bank route that needs it, from
+// ENABLE_BANKING_APP_ID/ENABLE_BANKING_KEY_FILE (src/bank/env.ts) unless
+// `bank.client` is injected, so the API serves without that env until then
+// (503 naming the missing variables). PSU_IP_ADDRESS (+ PSU_USER_AGENT) make a
+// run attended: the consent backfill always when set, a sync only when the
+// request asks for it.
 //
 //   const app = createApi({ rw, ro, rwToken, roToken, documentsDir });
 //   Bun.serve({ fetch: app.fetch });
 import type { SQL } from "bun";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { Hono, type Context } from "hono";
+import { EnableBankingClient, EnableBankingError, type PsuContext } from "../bank/client";
+import { clientFromEnv } from "../bank/env";
+import { ConsentRaceError, completeConsent, startConsent, syncConnection, type SyncResult } from "../bank/sync";
 import { DocumentIntegrityError, documentStore, type Origin } from "../documents";
 import { buildMvaMelding, readMvaTerm } from "../mva";
 import { buildSaft, type SaftVersion } from "../saft";
@@ -38,11 +50,26 @@ export interface ApiOptions {
   roToken?: string;
   /** Blob root for the document store; default $DOCUMENTS_DIR or ./documents. */
   documentsDir?: string;
+  /** Enable Banking; every field defaults from the environment, read lazily. */
+  bank?: BankOptions;
+}
+
+export interface BankOptions {
+  /** Builds the client once, on first use; default clientFromEnv(env). */
+  client?: () => EnableBankingClient | Promise<EnableBankingClient>;
+  /**
+   * Default process.env: ENABLE_BANKING_APP_ID, ENABLE_BANKING_KEY_FILE,
+   * ENABLE_BANKING_API_URL, ENABLE_BANKING_REDIRECT_URL, PSU_IP_ADDRESS,
+   * PSU_USER_AGENT.
+   */
+  env?: Record<string, string | undefined>;
+  /** The 19xx account each consented bank account feeds; default 1920 (as the CLI). */
+  ledgerAccount?: string;
 }
 
 type Env = { Variables: { sql: SQL; access: Access } };
 type Handler = (c: Context<Env>) => Promise<Response> | Response;
-type Method = "GET" | "POST" | "PUT";
+type Method = "GET" | "POST" | "PUT" | "DELETE";
 
 export interface Route {
   method: Method;
@@ -108,6 +135,10 @@ function errorResponse(e: unknown): Response {
     return Response.json(body, { status: statusFor(e.errno) });
   }
   if (e instanceof HttpError) return Response.json({ error: e.message, sqlstate: null }, { status: e.status });
+  if (e instanceof EnableBankingError) {
+    return Response.json({ error: `Enable Banking: ${e.message}`, sqlstate: null }, { status: 502 });
+  }
+  if (e instanceof ConsentRaceError) return Response.json({ error: e.message, sqlstate: null }, { status: 409 });
   if (e instanceof DocumentIntegrityError) {
     return Response.json({ error: e.message, sqlstate: null }, { status: 500 });
   }
@@ -306,6 +337,12 @@ const VIEWS: Record<string, ViewRead & { path: string }> = {
     view: "bank_reconciliation",
     filters: [eq("ledger_account")],
     order: ["ledger_account", "id_hash"],
+  },
+  bank_connection_status: {
+    path: "/bank/connections",
+    view: "bank_connection_status",
+    filters: [eq("id", "integer"), eq("status")],
+    order: ["id"],
   },
 };
 
@@ -553,14 +590,141 @@ export function createApi(opts: ApiOptions) {
     });
   });
 
-  // --- bank (#10 fills these in) -------------------------------------------------
-  const consentStub: Handler = () =>
-    Response.json(
-      { error: "bank consent callback is not implemented yet (Enable Banking, #10)", sqlstate: null },
-      { status: 501 },
-    );
-  add({ method: "GET", path: "/bank/consent-callback", operationId: "bank_consent_callback", public: true }, consentStub);
-  add({ method: "POST", path: "/bank/consent-callback", operationId: "bank_consent_callback_post", public: true }, consentStub);
+  // --- bank (src/bank/sync.ts, #10) ----------------------------------------------
+  const bankOpts = opts.bank ?? {};
+  const bankVars = bankOpts.env ?? process.env;
+  const envVar = (name: string) => bankVars[name]?.trim() || undefined;
+  let bankClientP: Promise<EnableBankingClient> | undefined;
+  const bankClient = async (): Promise<EnableBankingClient> => {
+    if (!bankClientP) {
+      const p = Promise.resolve().then(() => (bankOpts.client ? bankOpts.client() : clientFromEnv(bankVars)));
+      bankClientP = p;
+      p.catch(() => {
+        if (bankClientP === p) bankClientP = undefined; // retry after the env is fixed
+      });
+    }
+    try {
+      return await bankClientP;
+    } catch (e) {
+      throw new HttpError(503, `Enable Banking is not configured: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+  const configuredPsu = (userAgent?: string): PsuContext | undefined => {
+    const ipAddress = envVar("PSU_IP_ADDRESS");
+    return ipAddress ? { ipAddress, userAgent: envVar("PSU_USER_AGENT") ?? userAgent } : undefined;
+  };
+
+  add({ method: "POST", path: "/bank/consents", operationId: "start_consent" }, async (c) => {
+    const b = await jsonObject(c);
+    requireFields(b, ["entity", "aspsp"]);
+    const aspsp = b.aspsp as Record<string, unknown>;
+    if (typeof aspsp !== "object" || Array.isArray(aspsp) || typeof aspsp.name !== "string") {
+      throw new HttpError(400, "field aspsp must be an object {name, country?}");
+    }
+    const redirectUrl = scalar("redirect_url", b.redirect_url) ?? envVar("ENABLE_BANKING_REDIRECT_URL");
+    if (!redirectUrl) {
+      throw new HttpError(400, "redirect_url is required: pass it, or set ENABLE_BANKING_REDIRECT_URL on the server");
+    }
+    const validUntilText = scalar("valid_until", b.valid_until);
+    const validUntil = validUntilText === undefined ? undefined : new Date(validUntilText);
+    if (validUntil && Number.isNaN(validUntil.getTime())) {
+      throw new HttpError(400, `valid_until is not a date-time: ${JSON.stringify(validUntilText)}`);
+    }
+    const client = await bankClient();
+    return c.json(await startConsent(c.var.sql, client, {
+      entity: scalar("entity", b.entity)!,
+      aspsp: { name: aspsp.name, country: scalar("aspsp.country", aspsp.country) },
+      redirectUrl,
+      validUntil,
+      psuType: scalar("psu_type", b.psu_type) as "personal" | "business" | undefined,
+      language: scalar("language", b.language),
+    }));
+  });
+
+  // The bank redirects the owner's browser here: plain text back, not JSON.
+  const callbackQuery = ["code", "state", "error", "error_description"];
+  add({ method: "GET", path: "/bank/consent-callback", operationId: "complete_consent", query: callbackQuery, public: true },
+    async (c) => {
+      const text = (status: number, body: string) =>
+        new Response(`${body}\n`, { status, headers: { "content-type": "text/plain; charset=utf-8" } });
+      try {
+        const q = c.req.query();
+        if (q.error) {
+          throw new HttpError(400, `the bank reported ${q.error}${q.error_description ? ` (${q.error_description})` : ""}; start the consent again`);
+        }
+        if (!q.code || !q.state) throw new HttpError(400, "the callback carries no code and state");
+        const r = await completeConsent(opts.rw, await bankClient(), {
+          state: q.state,
+          code: q.code,
+          ledgerAccount: () => bankOpts.ledgerAccount ?? "1920",
+          psu: configuredPsu(c.req.header("user-agent")),
+        });
+        const lines = [
+          `Bank connection ${r.connectionId} authorized${r.validUntil ? `, valid until ${r.validUntil}` : ""}.`,
+          ...r.accounts.map((a) => `Account ${a.iban ?? a.bban ?? a.idHash} -> ${a.ledgerAccount ?? "not booked"}`),
+          ...(r.superseded.length ? [`Superseded connection(s): ${r.superseded.join(", ")}`] : []),
+          r.backfill
+            ? `Backfill: ${r.backfill.outcome}, ${r.backfill.accounts.reduce((n, a) => n + a.inserted, 0)} new transaction(s)` +
+              (r.backfill.detail ? ` (${r.backfill.detail})` : "")
+            : "Backfill: not run",
+          ...(r.backfill?.warnings ?? []).map((w) => `Warning: ${w}`),
+          "You can close this window.",
+        ];
+        return text(200, lines.join("\n"));
+      } catch (e) {
+        const res = errorResponse(e);
+        const body = (await res.json()) as { error: string };
+        return text(res.status, `Bank consent failed: ${body.error}`);
+      }
+    });
+
+  add({ method: "POST", path: "/bank/sync", operationId: "sync_connection" }, async (c) => {
+    const raw = await c.req.text();
+    let b: Record<string, unknown> = {};
+    if (raw.trim()) {
+      try {
+        b = JSON.parse(raw);
+      } catch {
+        throw new HttpError(400, "request body must be a JSON object (or empty)");
+      }
+      if (b === null || typeof b !== "object" || Array.isArray(b)) {
+        throw new HttpError(400, "request body must be a JSON object (or empty)");
+      }
+    }
+    const id = scalar("connection_id", b.connection_id);
+    const entity = scalar("entity", b.entity);
+    if (id !== undefined && entity !== undefined) throw new HttpError(400, "give connection_id or entity, not both");
+    if (id !== undefined && !/^\d{1,18}$/.test(id)) throw new HttpError(400, "connection_id must be an integer");
+    if (b.attended !== undefined && typeof b.attended !== "boolean") throw new HttpError(400, "attended must be a boolean");
+    let psu: PsuContext | undefined;
+    if (b.attended === true) {
+      // Enable Banking tells attended from unattended by the Psu-* headers
+      // alone; never send a placeholder address to dodge the unattended budget.
+      psu = configuredPsu();
+      if (!psu) throw new HttpError(503, "attended sync needs PSU_IP_ADDRESS (the public address of the person syncing) set on the server");
+    }
+    const client = await bankClient();
+    if (id !== undefined) return c.json([await syncConnection(c.var.sql, client, Number(id), { psu })]);
+
+    const targets = (await c.var.sql`
+      select id from bank_connection
+       where status = 'authorized' and (${entity ?? null}::text is null or entity = ${entity ?? null}::text)
+       order by id`).map((r: { id: number | string }) => Number(r.id));
+    const results: (SyncResult | { connectionId: number; outcome: "error"; attended: boolean; accounts: []; warnings: []; detail: string })[] = [];
+    for (const connectionId of targets) {
+      try {
+        results.push(await syncConnection(c.var.sql, client, connectionId, { psu }));
+      } catch (e) {
+        // logged in bank_fetch as 'error'; the other connections still run
+        const detail = e instanceof Error ? e.message : String(e);
+        results.push({ connectionId, outcome: "error", attended: !!psu, accounts: [], warnings: [], detail });
+      }
+    }
+    return c.json(results);
+  });
+
+  add({ method: "POST", path: "/bank/matches", operationId: "match_bank" }, jsonbCommand("match_bank"));
+  add({ method: "DELETE", path: "/bank/matches", operationId: "unmatch_bank" }, jsonbCommand("unmatch_bank"));
 
   // --- meta --------------------------------------------------------------------
   add({ method: "GET", path: "/openapi.json", operationId: "openapi", public: true }, (c) => c.json(openapi));

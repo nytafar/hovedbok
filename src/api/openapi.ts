@@ -69,6 +69,10 @@ const errorResponses = {
   "409": { description: "Unique violation (23505) or a serialisation/lock conflict: retry or change the key.", content: { "application/json": { schema: ref("Error") } } },
   "422": { description: "The database refused the operation (RAISE P0001, integrity class 23): the message says why.", content: { "application/json": { schema: ref("Error") } } },
 };
+const bankErrors = {
+  "502": { description: "Enable Banking refused or failed: the message is the bank API's.", content: { "application/json": { schema: ref("Error") } } },
+  "503": { description: "Enable Banking is not configured on the server (the message names the missing variables).", content: { "application/json": { schema: ref("Error") } } },
+};
 const ok = (schema: Schema, description = "OK") => ({
   "200": { description, content: { "application/json": { schema } } },
   ...errorResponses,
@@ -198,6 +202,59 @@ const schemas: Record<string, Schema> = {
   LinkDocument: obj({ entity: str(), sha256: { type: "string", pattern: "^[0-9a-f]{64}$" } }, ["entity", "sha256"]),
   LinkDocumentResult: obj({ entity: str(), year: int(), nr: int(), sha256: str() }, ["entity", "year", "nr", "sha256"]),
 
+  // Enable Banking (src/bank/sync.ts, 0030)
+  StartConsent: obj({
+    entity: str(),
+    aspsp: obj({ name: str("ASPSP (bank) name as Enable Banking lists it."), country: str("Default NO.") }, ["name"]),
+    redirect_url: str("Where the bank sends the browser back (registered on the app); default ENABLE_BANKING_REDIRECT_URL. Point it at /bank/consent-callback."),
+    valid_until: { type: "string", format: "date-time", description: "Consent end; default the maximum (180 days)." },
+    psu_type: { type: "string", enum: ["business", "personal"], description: "Default business." },
+    language: str(),
+  }, ["entity", "aspsp"]),
+  StartConsentResult: obj({
+    connectionId: int("The pending bank_connection."),
+    state: str("CSRF state; the callback must carry it back."),
+    url: str("Open in the owner's browser to authorise at the bank."),
+  }, ["connectionId", "state", "url"]),
+  SyncRequest: obj({
+    connection_id: int("One consent. Omit for every authorized consent (of entity, when given)."),
+    entity: str("Every authorized consent of this entity. Not together with connection_id."),
+    attended: bool("A human is present: send PSU headers (needs PSU_IP_ADDRESS on the server) and skip the unattended budget. Default false."),
+  }, [], { description: "May be empty: sync every authorized consent, unattended." }),
+  AccountSyncResult: obj({
+    idHash: str(), seen: int("BOOK transactions in the window."), inserted: int("New bank_transaction rows."),
+    conflicts: int("Same entry_reference, different amount."), pending: int("Rows in the replaced pending snapshot."),
+    ignored: int(), balances: int(), pages: int(),
+    truncated: bool("Pagination cut short; last_synced_at not advanced."),
+    dateFrom: ndate(), dateTo: ndate(),
+  }),
+  SyncResult: obj({
+    connectionId: int(),
+    outcome: {
+      type: "string", enum: ["ok", "rate_limited", "expired", "deferred", "error"],
+      description: "deferred: budget or backoff said no, nothing reached the bank. error: only in a multi-consent run (logged in bank_fetch); a single-consent run answers with an HTTP error instead.",
+    },
+    attended: bool(),
+    accounts: { type: "array", items: ref("AccountSyncResult") },
+    warnings: strs(),
+    resumeAt: { type: "string", format: "date-time", description: "rate_limited/deferred: when unattended syncing may resume." },
+    detail: str(),
+  }, ["connectionId", "outcome", "attended", "accounts", "warnings"]),
+  MatchBank: obj({
+    id_hash: str("Bank account (identification_hash)."), dedup_key: str("The bank transaction within it."),
+    entity: str(), year: int(), nr: int(),
+    line: int("Voucher line; default the voucher's single line on the bank account's ledger account."),
+  }, ["id_hash", "dedup_key", "entity", "year", "nr"]),
+  MatchBankResult: obj({
+    id_hash: str(), dedup_key: str(), entity: str(), year: int(), nr: int(), line: int(),
+    created: bool("false when the link existed (idempotent)."),
+  }, ["id_hash", "dedup_key", "entity", "year", "nr", "line", "created"]),
+  UnmatchBank: obj({
+    id_hash: str(), dedup_key: str(), entity: str(), year: int(), nr: int(),
+    line: int("Omit to remove every link between the transaction and the voucher."),
+  }, ["id_hash", "dedup_key", "entity", "year", "nr"]),
+  UnmatchBankResult: obj({ deleted: int() }, ["deleted"]),
+
   // MVA-melding (src/mva.ts)
   MvaMelding: obj({
     xml: str(),
@@ -286,6 +343,19 @@ const schemas: Record<string, Schema> = {
     entity: str(), id_hash: str(), dedup_key: str(), booking_date: ndate(), value_date: ndate(),
     amount: ore("Signed øre, positive = into the account."), ccy: str(), status: str(), counterparty: nstr(),
     reference: nstr(), reference_schema: nstr(), remittance: nstr(), raw: json(), imported_at: ts(),
+  }),
+  BankConnectionStatusRow: obj({
+    entity: str(), id: int(), aspsp_name: str(), aspsp_country: str(),
+    status: { type: "string", enum: ["pending", "authorized", "expired", "revoked", "superseded"] },
+    valid_until: nts(), created_at: ts(), last_synced_at: nts(), backoff_until: nts(),
+    backing_off: bool("A 429 backoff (≥ 6 h) is in force: unattended runs are deferred until backoff_until."),
+    accounts: int("Bank accounts on this consent."),
+    unattended_24h: int("Unattended runs that reached the bank in the last 24 h (budget: 4)."),
+    unattended_left: int(),
+    unattended_resume_at: { ...nts(), description: "When an unattended run may reach the bank again; null = now." },
+    last_fetch_at: nts(), last_fetch_attended: { type: ["boolean", "null"] },
+    last_fetch_outcome: { type: ["string", "null"], enum: ["ok", "rate_limited", "expired", "error", "deferred", null] },
+    last_fetch_detail: nstr(),
   }),
   BankReconciliationRow: obj({
     entity: str(), id_hash: str(), ledger_account: str(), ledger_balance: ore(), bank_balance: nore(),
@@ -477,19 +547,57 @@ const paths: Record<string, Record<string, unknown>> = {
     get: read("bank_reconciliation", "Ledger balance vs the latest bank balance per bank account.",
       "BankReconciliationRow", [q("ledger_account", { type: "string" }, "The 19xx ledger account.")]),
   },
+  "/bank/connections": {
+    get: read("bank_connection_status",
+      "Enable Banking consents: status, accounts, the unattended budget (4 per 24 h) and the 429 backoff, last fetch.",
+      "BankConnectionStatusRow", [q("id", { type: "integer" }, "Connection id."),
+        q("status", { type: "string", enum: ["pending", "authorized", "expired", "revoked", "superseded"] }, "Consent status.")]),
+  },
+  "/bank/consents": {
+    post: {
+      ...command("start_consent",
+        "Start an Enable Banking consent: a pending connection and the bank's authorization URL. The bank redirects the browser to /bank/consent-callback.",
+        ref("StartConsent"), ref("StartConsentResult")),
+      responses: { ...ok(ref("StartConsentResult")), ...bankErrors },
+    },
+  },
   "/bank/consent-callback": {
     get: {
-      operationId: "bank_consent_callback",
-      summary: "Enable Banking consent redirect (#10). Not implemented yet: 501. No bearer token.",
+      operationId: "complete_consent",
+      summary: "Enable Banking consent redirect: records the session and its accounts (ledger account 1920), then backfills " +
+        "(attended when PSU_IP_ADDRESS is set). Authenticated by state, not a bearer token. Answers in plain text for the browser.",
       security: [],
-      responses: { "501": { description: "Not implemented.", content: { "application/json": { schema: ref("Error") } } } },
+      parameters: [
+        q("code", { type: "string" }, "Authorization code from the bank."),
+        q("state", { type: "string" }, "The state start_consent issued."),
+        q("error", { type: "string" }, "Set by the bank when the owner cancelled or authorization failed."),
+        q("error_description", { type: "string" }, "The bank's explanation of error."),
+      ],
+      responses: {
+        "200": { description: "Connection authorized; accounts and backfill summarised.", content: { "text/plain": { schema: { type: "string" } } } },
+        "400": { description: "No code/state, or the bank reported an error.", content: { "text/plain": { schema: { type: "string" } } } },
+        "409": { description: "The consent was completed by another request.", content: { "text/plain": { schema: { type: "string" } } } },
+        "422": { description: "No pending connection for this state (already used, or unknown), or the database refused.", content: { "text/plain": { schema: { type: "string" } } } },
+        "502": { description: "Enable Banking refused or failed.", content: { "text/plain": { schema: { type: "string" } } } },
+        "503": { description: "Enable Banking is not configured on the server.", content: { "text/plain": { schema: { type: "string" } } } },
+      },
     },
+  },
+  "/bank/sync": {
     post: {
-      operationId: "bank_consent_callback_post",
-      summary: "Enable Banking consent callback (#10). Not implemented yet: 501. No bearer token.",
-      security: [],
-      responses: { "501": { description: "Not implemented.", content: { "application/json": { schema: ref("Error") } } } },
+      ...command("sync_connection",
+        "Fetch transactions and balances for one consent or every authorized one. Unattended by default: ≤4 runs per consent per 24 h, " +
+          "none during a 429 backoff (such runs come back deferred, with resumeAt).",
+        ref("SyncRequest"), { type: "array", items: ref("SyncResult") }),
+      requestBody: { required: false, content: { "application/json": { schema: ref("SyncRequest") } } },
+      responses: { ...ok({ type: "array", items: ref("SyncResult") }, "One result per consent synced."), ...bankErrors },
     },
+  },
+  "/bank/matches": {
+    post: command("match_bank", "Link a bank transaction to the voucher line on its bank account's ledger account (idempotent).",
+      ref("MatchBank"), ref("MatchBankResult")),
+    delete: command("unmatch_bank", "Remove a bank transaction's link(s) to a voucher; it returns to /bank/unmatched.",
+      ref("UnmatchBank"), ref("UnmatchBankResult")),
   },
   "/openapi.json": {
     get: {

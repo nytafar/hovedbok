@@ -42,7 +42,7 @@ beforeAll(async () => {
   rw = new SQL(loginUrl(rwRole), { max: 2 });
   ro = new SQL(loginUrl(roRole), { max: 2 });
   dir = await mkdtemp(join(tmpdir(), "hovedbok-api-docs-"));
-  api = createApi({ rw, ro, rwToken: RW_TOKEN, roToken: RO_TOKEN, documentsDir: dir });
+  api = createApi({ rw, ro, rwToken: RW_TOKEN, roToken: RO_TOKEN, documentsDir: dir, bank: { env: {} } });
   server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: api.fetch });
 });
 
@@ -346,13 +346,14 @@ describe("the agent flow over HTTP", () => {
     expect(tampered.json.error).toContain(`document ${sha}: blob on disk hashes to`);
   });
 
-  test("bank reads and the consent callback stub", async () => {
+  test("bank reads; the consent callback is tokenless (bank flow: test/api_bank.test.ts)", async () => {
     expect((await get(`/bank/unmatched?entity=${E}`)).json).toEqual([]);
     expect((await get(`/bank/reconciliation?entity=${E}`)).json).toEqual([]);
+    expect((await get(`/bank/connections?entity=${E}`)).json).toEqual([]);
     const cb = await call("GET", "/bank/consent-callback?code=x&state=y", { token: null });
-    expect(cb.status).toBe(501);
-    expect(cb.json.error).toContain("not implemented");
-    expect((await post("/bank/consent-callback", {}, null)).status).toBe(501);
+    expect(cb.status).toBe(503); // no Enable Banking env here, and no 401
+    expect(cb.text).toContain("ENABLE_BANKING_APP_ID");
+    expect((await post("/bank/consent-callback", {}, null)).status).toBe(401);
   });
 
   test("close periods, then the fiscal year", async () => {

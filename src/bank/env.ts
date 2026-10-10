@@ -17,8 +17,8 @@ export interface BankEnv {
 export function bankEnv(env: Record<string, string | undefined> = process.env): BankEnv {
   const appId = env.ENABLE_BANKING_APP_ID?.trim();
   const keyFile = env.ENABLE_BANKING_KEY_FILE?.trim();
-  if (!appId) throw new Error("ENABLE_BANKING_APP_ID is not set");
-  if (!keyFile) throw new Error("ENABLE_BANKING_KEY_FILE is not set");
+  const missing = [!appId && "ENABLE_BANKING_APP_ID", !keyFile && "ENABLE_BANKING_KEY_FILE"].filter(Boolean);
+  if (!appId || !keyFile) throw new Error(`${missing.join(" and ")} ${missing.length > 1 ? "are" : "is"} not set`);
   return {
     appId,
     keyFile,

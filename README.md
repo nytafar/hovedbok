@@ -106,7 +106,8 @@ Environment: `API_TOKEN` (required), `API_RO_TOKEN`, `DATABASE_URL_APP`
 the server warns), `DATABASE_URL_RO` (default `DATABASE_URL_APP`),
 `DOCUMENTS_DIR` (default `./documents`), `PORT` (3000), `HOST` (127.0.0.1).
 `/openapi.json` and `/bank/consent-callback` (Enable Banking's redirect,
-#10) take no token.
+authenticated by its one-time `state`) take no token. The bank routes read
+`ENABLE_BANKING_*` (below), `PSU_IP_ADDRESS` and `PSU_USER_AGENT`.
 
 ## Enable Banking
 

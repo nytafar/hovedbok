@@ -7,6 +7,9 @@
 //   DATABASE_URL_RO    login in role hovedbok_ro (default: DATABASE_URL_APP — dev only)
 //   DOCUMENTS_DIR      document blob root (default ./documents)
 //   PORT               default 3000; HOST default 127.0.0.1
+//   ENABLE_BANKING_*   bank routes (src/bank/env.ts); read on the first bank request
+//   PSU_IP_ADDRESS     the owner's public address: attended consent backfill and
+//   PSU_USER_AGENT       `{"attended": true}` syncs (unset = unattended only)
 //
 // hovedbok_app and hovedbok_ro are NOLOGIN privilege anchors (0001); deploy
 // creates the login users: `create role <name> login password '…' in role hovedbok_app`.
