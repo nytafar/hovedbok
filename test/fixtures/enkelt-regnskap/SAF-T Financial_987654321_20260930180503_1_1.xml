@@ -1,0 +1,1328 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<AuditFile xmlns="urn:StandardAuditFile-Taxation-Financial:NO">
+  <Header>
+    <AuditFileVersion>1.30</AuditFileVersion>
+    <AuditFileCountry>NO</AuditFileCountry>
+    <AuditFileDateCreated>2026-09-30</AuditFileDateCreated>
+    <SoftwareCompanyName>Egenutviklet (enkelt-regnskap)</SoftwareCompanyName>
+    <SoftwareID>enkelt-regnskap</SoftwareID>
+    <SoftwareVersion>1.0</SoftwareVersion>
+    <Company>
+      <RegistrationNumber>987654321</RegistrationNumber>
+      <Name>Eksempel Catering</Name>
+      <Address>
+        <StreetName>Storgata</StreetName>
+        <Number>1</Number>
+        <City>Lilleby</City>
+        <PostalCode>1234</PostalCode>
+        <Country>NO</Country>
+      </Address>
+      <Contact>
+        <ContactPerson>
+          <FirstName>Ola</FirstName>
+          <LastName>Nordmann</LastName>
+        </ContactPerson>
+        <Telephone>+47 99 99 99 99</Telephone>
+        <Email>post@example.com</Email>
+      </Contact>
+      <TaxRegistration>
+        <TaxRegistrationNumber>987654321</TaxRegistrationNumber>
+        <TaxAuthority>Skatteetaten</TaxAuthority>
+      </TaxRegistration>
+      <BankAccount>
+        <BankAccountNumber>12345678901</BankAccountNumber>
+        <CurrencyCode>NOK</CurrencyCode>
+        <GeneralLedgerAccountID>1920</GeneralLedgerAccountID>
+      </BankAccount>
+      <BankAccount>
+        <BankAccountNumber>98765432109</BankAccountNumber>
+        <CurrencyCode>NOK</CurrencyCode>
+        <GeneralLedgerAccountID>1921</GeneralLedgerAccountID>
+      </BankAccount>
+    </Company>
+    <DefaultCurrencyCode>NOK</DefaultCurrencyCode>
+    <SelectionCriteria>
+      <PeriodStart>7</PeriodStart>
+      <PeriodStartYear>2026</PeriodStartYear>
+      <PeriodEnd>8</PeriodEnd>
+      <PeriodEndYear>2026</PeriodEndYear>
+    </SelectionCriteria>
+    <HeaderComment>ENK uten regnskapsplikt. Regnskap ført i enkelt-regnskap for 4. termin 2026. Konto 1921 er blandet privat/næring; private linjer er ført mot 2050 uten mva.</HeaderComment>
+    <TaxAccountingBasis>A</TaxAccountingBasis>
+    <UserID>987654321</UserID>
+  </Header>
+  <MasterFiles>
+    <GeneralLedgerAccounts>
+      <Account>
+        <AccountID>1500</AccountID>
+        <AccountDescription>Kundefordringer</AccountDescription>
+        <GroupingCategory>balanseverdiForOmloepsmiddel</GroupingCategory>
+        <GroupingCode>1500</GroupingCode>
+        <AccountType>GL</AccountType>
+        <OpeningDebitBalance>0.00</OpeningDebitBalance>
+        <ClosingDebitBalance>0.00</ClosingDebitBalance>
+      </Account>
+      <Account>
+        <AccountID>1580</AccountID>
+        <AccountDescription>Oppgjørskonto kortterminal</AccountDescription>
+        <GroupingCategory>balanseverdiForOmloepsmiddel</GroupingCategory>
+        <GroupingCode>1570</GroupingCode>
+        <AccountType>GL</AccountType>
+        <OpeningDebitBalance>0.00</OpeningDebitBalance>
+        <ClosingDebitBalance>0.00</ClosingDebitBalance>
+      </Account>
+      <Account>
+        <AccountID>1920</AccountID>
+        <AccountDescription>Bank brukskonto 1234.56.78901 (næring)</AccountDescription>
+        <GroupingCategory>balanseverdiForOmloepsmiddel</GroupingCategory>
+        <GroupingCode>1920</GroupingCode>
+        <AccountType>GL</AccountType>
+        <OpeningDebitBalance>0.00</OpeningDebitBalance>
+        <ClosingDebitBalance>61573.75</ClosingDebitBalance>
+      </Account>
+      <Account>
+        <AccountID>1921</AccountID>
+        <AccountDescription>Bank brukskonto 9876.54.32109 (blandet privat/næring)</AccountDescription>
+        <GroupingCategory>balanseverdiForOmloepsmiddel</GroupingCategory>
+        <GroupingCode>1920</GroupingCode>
+        <AccountType>GL</AccountType>
+        <OpeningDebitBalance>0.00</OpeningDebitBalance>
+        <ClosingCreditBalance>2505.04</ClosingCreditBalance>
+      </Account>
+      <Account>
+        <AccountID>2050</AccountID>
+        <AccountDescription>Privat uttak/innskudd (eier)</AccountDescription>
+        <GroupingCategory>egenkapital</GroupingCategory>
+        <GroupingCode>2050</GroupingCode>
+        <AccountType>GL</AccountType>
+        <OpeningDebitBalance>0.00</OpeningDebitBalance>
+        <ClosingDebitBalance>1446.30</ClosingDebitBalance>
+      </Account>
+      <Account>
+        <AccountID>2400</AccountID>
+        <AccountDescription>Leverandørgjeld</AccountDescription>
+        <GroupingCategory>kortsiktigGjeld</GroupingCategory>
+        <GroupingCode>2400</GroupingCode>
+        <AccountType>GL</AccountType>
+        <OpeningDebitBalance>0.00</OpeningDebitBalance>
+        <ClosingDebitBalance>0.00</ClosingDebitBalance>
+      </Account>
+      <Account>
+        <AccountID>2700</AccountID>
+        <AccountDescription>Utgående merverdiavgift</AccountDescription>
+        <GroupingCategory>kortsiktigGjeld</GroupingCategory>
+        <GroupingCode>2740</GroupingCode>
+        <AccountType>GL</AccountType>
+        <OpeningDebitBalance>0.00</OpeningDebitBalance>
+        <ClosingCreditBalance>14417.75</ClosingCreditBalance>
+      </Account>
+      <Account>
+        <AccountID>2710</AccountID>
+        <AccountDescription>Inngående merverdiavgift, alminnelig sats 25 %</AccountDescription>
+        <GroupingCategory>kortsiktigGjeld</GroupingCategory>
+        <GroupingCode>2740</GroupingCode>
+        <AccountType>GL</AccountType>
+        <OpeningDebitBalance>0.00</OpeningDebitBalance>
+        <ClosingDebitBalance>1205.14</ClosingDebitBalance>
+      </Account>
+      <Account>
+        <AccountID>2711</AccountID>
+        <AccountDescription>Inngående merverdiavgift, middels sats 15 %</AccountDescription>
+        <GroupingCategory>kortsiktigGjeld</GroupingCategory>
+        <GroupingCode>2740</GroupingCode>
+        <AccountType>GL</AccountType>
+        <OpeningDebitBalance>0.00</OpeningDebitBalance>
+        <ClosingDebitBalance>691.75</ClosingDebitBalance>
+      </Account>
+      <Account>
+        <AccountID>3000</AccountID>
+        <AccountDescription>Salgsinntekt catering/produksjon, avgiftspliktig 25 %</AccountDescription>
+        <GroupingCategory>salgsinntekt</GroupingCategory>
+        <GroupingCode>3000</GroupingCode>
+        <AccountType>GL</AccountType>
+        <OpeningDebitBalance>0.00</OpeningDebitBalance>
+        <ClosingCreditBalance>57671.00</ClosingCreditBalance>
+      </Account>
+      <Account>
+        <AccountID>4300</AccountID>
+        <AccountDescription>Innkjøp råvarer/matvarer</AccountDescription>
+        <GroupingCategory>varekostnad</GroupingCategory>
+        <GroupingCode>4005</GroupingCode>
+        <AccountType>GL</AccountType>
+        <OpeningDebitBalance>0.00</OpeningDebitBalance>
+        <ClosingDebitBalance>4611.65</ClosingDebitBalance>
+      </Account>
+      <Account>
+        <AccountID>6540</AccountID>
+        <AccountDescription>Inventar og utstyr (kostnadsført direkte)</AccountDescription>
+        <GroupingCategory>annenDriftskostnad</GroupingCategory>
+        <GroupingCode>6500</GroupingCode>
+        <AccountType>GL</AccountType>
+        <OpeningDebitBalance>0.00</OpeningDebitBalance>
+        <ClosingDebitBalance>4210.20</ClosingDebitBalance>
+      </Account>
+      <Account>
+        <AccountID>6550</AccountID>
+        <AccountDescription>Driftsmateriale, renhold og engangsartikler</AccountDescription>
+        <GroupingCategory>annenDriftskostnad</GroupingCategory>
+        <GroupingCode>7700</GroupingCode>
+        <AccountType>GL</AccountType>
+        <OpeningDebitBalance>0.00</OpeningDebitBalance>
+        <ClosingDebitBalance>250.00</ClosingDebitBalance>
+      </Account>
+      <Account>
+        <AccountID>6560</AccountID>
+        <AccountDescription>Dekorasjon/rekvisita til arrangement</AccountDescription>
+        <GroupingCategory>annenDriftskostnad</GroupingCategory>
+        <GroupingCode>7700</GroupingCode>
+        <AccountType>GL</AccountType>
+        <OpeningDebitBalance>0.00</OpeningDebitBalance>
+        <ClosingDebitBalance>360.00</ClosingDebitBalance>
+      </Account>
+      <Account>
+        <AccountID>7770</AccountID>
+        <AccountDescription>Bank- og kortgebyrer</AccountDescription>
+        <GroupingCategory>annenDriftskostnad</GroupingCategory>
+        <GroupingCode>7700</GroupingCode>
+        <AccountType>GL</AccountType>
+        <OpeningDebitBalance>0.00</OpeningDebitBalance>
+        <ClosingDebitBalance>245.00</ClosingDebitBalance>
+      </Account>
+    </GeneralLedgerAccounts>
+    <Customers>
+      <Customer>
+        <RegistrationNumber>912345678</RegistrationNumber>
+        <Name>Fjellheim Kulturlag</Name>
+        <Address>
+          <StreetName>Kulturvegen 7</StreetName>
+          <City>Lilleby</City>
+          <PostalCode>1234</PostalCode>
+          <Country>NO</Country>
+        </Address>
+        <CustomerID>K001</CustomerID>
+        <BalanceAccount>
+          <AccountID>1500</AccountID>
+          <OpeningDebitBalance>0.00</OpeningDebitBalance>
+          <ClosingDebitBalance>0.00</ClosingDebitBalance>
+        </BalanceAccount>
+      </Customer>
+      <Customer>
+        <RegistrationNumber>923456789</RegistrationNumber>
+        <Name>Eksempel AS</Name>
+        <Address>
+          <StreetName>Storgata 2</StreetName>
+          <City>Lilleby</City>
+          <PostalCode>1234</PostalCode>
+          <Country>NO</Country>
+        </Address>
+        <CustomerID>K002</CustomerID>
+        <BalanceAccount>
+          <AccountID>1500</AccountID>
+          <OpeningDebitBalance>0.00</OpeningDebitBalance>
+          <ClosingDebitBalance>0.00</ClosingDebitBalance>
+        </BalanceAccount>
+      </Customer>
+    </Customers>
+    <Suppliers>
+      <Supplier>
+        <RegistrationNumber>IE1234567A</RegistrationNumber>
+        <Name>Vendor Ltd</Name>
+        <Address>
+          <StreetName>1 Example Street</StreetName>
+          <City>Dublin</City>
+          <PostalCode>D02 X285</PostalCode>
+          <Country>IE</Country>
+        </Address>
+        <SupplierID>L001</SupplierID>
+        <BalanceAccount>
+          <AccountID>2400</AccountID>
+          <OpeningDebitBalance>0.00</OpeningDebitBalance>
+          <ClosingDebitBalance>0.00</ClosingDebitBalance>
+        </BalanceAccount>
+      </Supplier>
+      <Supplier>
+        <RegistrationNumber>934567890</RegistrationNumber>
+        <Name>Matgrossisten AS</Name>
+        <Address>
+          <StreetName>Industrivegen 10</StreetName>
+          <City>Lilleby</City>
+          <PostalCode>1234</PostalCode>
+          <Country>NO</Country>
+        </Address>
+        <SupplierID>L002</SupplierID>
+        <BalanceAccount>
+          <AccountID>2400</AccountID>
+          <OpeningDebitBalance>0.00</OpeningDebitBalance>
+          <ClosingDebitBalance>0.00</ClosingDebitBalance>
+        </BalanceAccount>
+      </Supplier>
+      <Supplier>
+        <RegistrationNumber>945678901</RegistrationNumber>
+        <Name>Kortterminal AS</Name>
+        <Address>
+          <StreetName>Torget 1</StreetName>
+          <City>Lilleby</City>
+          <PostalCode>1234</PostalCode>
+          <Country>NO</Country>
+        </Address>
+        <SupplierID>L009</SupplierID>
+        <BalanceAccount>
+          <AccountID>2400</AccountID>
+          <OpeningDebitBalance>0.00</OpeningDebitBalance>
+          <ClosingDebitBalance>0.00</ClosingDebitBalance>
+        </BalanceAccount>
+      </Supplier>
+      <Supplier>
+        <RegistrationNumber>956789012</RegistrationNumber>
+        <Name>Nærbutikken Lilleby AS</Name>
+        <Address>
+          <StreetName>Storgata 5</StreetName>
+          <City>Lilleby</City>
+          <PostalCode>1234</PostalCode>
+          <Country>NO</Country>
+        </Address>
+        <SupplierID>L010</SupplierID>
+        <BalanceAccount>
+          <AccountID>2400</AccountID>
+          <OpeningDebitBalance>0.00</OpeningDebitBalance>
+          <ClosingDebitBalance>0.00</ClosingDebitBalance>
+        </BalanceAccount>
+      </Supplier>
+    </Suppliers>
+    <TaxTable>
+      <TaxTableEntry>
+        <TaxType>MVA</TaxType>
+        <Description>Merverdiavgift</Description>
+        <TaxCodeDetails>
+          <TaxCode>0</TaxCode>
+          <Description>Ingen merverdiavgiftsbehandling (anskaffelser)</Description>
+          <TaxPercentage>0</TaxPercentage>
+          <Country>NO</Country>
+          <StandardTaxCode>0</StandardTaxCode>
+          <BaseRate>100</BaseRate>
+        </TaxCodeDetails>
+        <TaxCodeDetails>
+          <TaxCode>1</TaxCode>
+          <Description>Fradragsberettiget innenlands inngående mva, alminnelig sats</Description>
+          <TaxPercentage>25</TaxPercentage>
+          <Country>NO</Country>
+          <StandardTaxCode>1</StandardTaxCode>
+          <BaseRate>100</BaseRate>
+        </TaxCodeDetails>
+        <TaxCodeDetails>
+          <TaxCode>3</TaxCode>
+          <Description>Utgående mva, alminnelig sats</Description>
+          <TaxPercentage>25</TaxPercentage>
+          <Country>NO</Country>
+          <StandardTaxCode>3</StandardTaxCode>
+          <BaseRate>100</BaseRate>
+        </TaxCodeDetails>
+        <TaxCodeDetails>
+          <TaxCode>11</TaxCode>
+          <Description>Fradragsberettiget innenlands inngående mva, middels sats</Description>
+          <TaxPercentage>15</TaxPercentage>
+          <Country>NO</Country>
+          <StandardTaxCode>11</StandardTaxCode>
+          <BaseRate>100</BaseRate>
+        </TaxCodeDetails>
+      </TaxTableEntry>
+    </TaxTable>
+  </MasterFiles>
+  <GeneralLedgerEntries>
+    <NumberOfEntries>29</NumberOfEntries>
+    <TotalDebit>167267.54</TotalDebit>
+    <TotalCredit>167267.54</TotalCredit>
+    <Journal>
+      <JournalID>GL</JournalID>
+      <Description>Hovedbok 4. termin 2026</Description>
+      <Type>GL</Type>
+      <Transaction>
+        <TransactionID>1</TransactionID>
+        <Period>7</Period>
+        <PeriodYear>2026</PeriodYear>
+        <TransactionDate>2026-07-01</TransactionDate>
+        <Description>Privat uttak: DAGLIGVARE LILLEBY (Visa varekjøp/uttak)</Description>
+        <SystemEntryDate>2026-09-30</SystemEntryDate>
+        <GLPostingDate>2026-07-01</GLPostingDate>
+        <Line>
+          <RecordID>1</RecordID>
+          <AccountID>2050</AccountID>
+          <Description>Privat uttak: DAGLIGVARE LILLEBY (Visa varekjøp/uttak)</Description>
+          <DebitAmount>
+            <Amount>219.20</Amount>
+          </DebitAmount>
+        </Line>
+        <Line>
+          <RecordID>2</RecordID>
+          <AccountID>1921</AccountID>
+          <Description>Privat uttak: DAGLIGVARE LILLEBY (Visa varekjøp/uttak)</Description>
+          <CreditAmount>
+            <Amount>219.20</Amount>
+          </CreditAmount>
+        </Line>
+      </Transaction>
+      <Transaction>
+        <TransactionID>2</TransactionID>
+        <Period>7</Period>
+        <PeriodYear>2026</PeriodYear>
+        <TransactionDate>2026-07-01</TransactionDate>
+        <Description>Leverandørfaktura 1001 Matgrossisten AS - råvarer</Description>
+        <SystemEntryDate>2026-09-30</SystemEntryDate>
+        <GLPostingDate>2026-07-01</GLPostingDate>
+        <Line>
+          <RecordID>1</RecordID>
+          <AccountID>4300</AccountID>
+          <Description>Leverandørfaktura 1001 Matgrossisten AS - råvarer</Description>
+          <DebitAmount>
+            <Amount>2608.70</Amount>
+          </DebitAmount>
+          <TaxInformation>
+            <TaxType>MVA</TaxType>
+            <TaxCode>11</TaxCode>
+            <TaxPercentage>15</TaxPercentage>
+            <Country>NO</Country>
+            <TaxBase>2608.70</TaxBase>
+            <DebitTaxAmount>
+              <Amount>391.30</Amount>
+            </DebitTaxAmount>
+          </TaxInformation>
+          <ReferenceNumber>1001</ReferenceNumber>
+        </Line>
+        <Line>
+          <RecordID>2</RecordID>
+          <AccountID>2711</AccountID>
+          <Description>Leverandørfaktura 1001 Matgrossisten AS - råvarer</Description>
+          <DebitAmount>
+            <Amount>391.30</Amount>
+          </DebitAmount>
+          <ReferenceNumber>1001</ReferenceNumber>
+        </Line>
+        <Line>
+          <RecordID>3</RecordID>
+          <AccountID>2400</AccountID>
+          <SupplierID>L002</SupplierID>
+          <Description>Leverandørfaktura 1001 Matgrossisten AS - råvarer</Description>
+          <CreditAmount>
+            <Amount>3000.00</Amount>
+          </CreditAmount>
+          <ReferenceNumber>1001</ReferenceNumber>
+        </Line>
+      </Transaction>
+      <Transaction>
+        <TransactionID>3</TransactionID>
+        <Period>7</Period>
+        <PeriodYear>2026</PeriodYear>
+        <TransactionDate>2026-07-03</TransactionDate>
+        <Description>Betaling leverandørfaktura 1001 Matgrossisten AS</Description>
+        <SystemEntryDate>2026-09-30</SystemEntryDate>
+        <GLPostingDate>2026-07-03</GLPostingDate>
+        <Line>
+          <RecordID>1</RecordID>
+          <AccountID>2400</AccountID>
+          <SupplierID>L002</SupplierID>
+          <Description>Betaling leverandørfaktura 1001 Matgrossisten AS</Description>
+          <DebitAmount>
+            <Amount>3000.00</Amount>
+          </DebitAmount>
+          <ReferenceNumber>1001</ReferenceNumber>
+        </Line>
+        <Line>
+          <RecordID>2</RecordID>
+          <AccountID>1920</AccountID>
+          <Description>Betaling leverandørfaktura 1001 Matgrossisten AS</Description>
+          <CreditAmount>
+            <Amount>3000.00</Amount>
+          </CreditAmount>
+          <ReferenceNumber>1001</ReferenceNumber>
+        </Line>
+      </Transaction>
+      <Transaction>
+        <TransactionID>4</TransactionID>
+        <Period>7</Period>
+        <PeriodYear>2026</PeriodYear>
+        <TransactionDate>2026-07-06</TransactionDate>
+        <Description>Nærbutikken Lilleby - råvarer</Description>
+        <SystemEntryDate>2026-09-30</SystemEntryDate>
+        <GLPostingDate>2026-07-06</GLPostingDate>
+        <Line>
+          <RecordID>1</RecordID>
+          <AccountID>4300</AccountID>
+          <Description>Nærbutikken Lilleby - råvarer</Description>
+          <DebitAmount>
+            <Amount>156.26</Amount>
+          </DebitAmount>
+          <TaxInformation>
+            <TaxType>MVA</TaxType>
+            <TaxCode>11</TaxCode>
+            <TaxPercentage>15</TaxPercentage>
+            <Country>NO</Country>
+            <TaxBase>156.26</TaxBase>
+            <DebitTaxAmount>
+              <Amount>23.44</Amount>
+            </DebitTaxAmount>
+          </TaxInformation>
+        </Line>
+        <Line>
+          <RecordID>2</RecordID>
+          <AccountID>2711</AccountID>
+          <Description>Nærbutikken Lilleby - råvarer</Description>
+          <DebitAmount>
+            <Amount>23.44</Amount>
+          </DebitAmount>
+        </Line>
+        <Line>
+          <RecordID>3</RecordID>
+          <AccountID>1921</AccountID>
+          <Description>Nærbutikken Lilleby - råvarer</Description>
+          <CreditAmount>
+            <Amount>179.70</Amount>
+          </CreditAmount>
+        </Line>
+      </Transaction>
+      <Transaction>
+        <TransactionID>5</TransactionID>
+        <Period>7</Period>
+        <PeriodYear>2026</PeriodYear>
+        <TransactionDate>2026-07-08</TransactionDate>
+        <Description>Dekorasjon arrangement - BLOMSTERBUTIKKEN LILLEBY</Description>
+        <SystemEntryDate>2026-09-30</SystemEntryDate>
+        <GLPostingDate>2026-07-08</GLPostingDate>
+        <Line>
+          <RecordID>1</RecordID>
+          <AccountID>6560</AccountID>
+          <Description>Dekorasjon arrangement - BLOMSTERBUTIKKEN LILLEBY</Description>
+          <DebitAmount>
+            <Amount>360.00</Amount>
+          </DebitAmount>
+          <TaxInformation>
+            <TaxType>MVA</TaxType>
+            <TaxCode>1</TaxCode>
+            <TaxPercentage>25</TaxPercentage>
+            <Country>NO</Country>
+            <TaxBase>360.00</TaxBase>
+            <DebitTaxAmount>
+              <Amount>90.00</Amount>
+            </DebitTaxAmount>
+          </TaxInformation>
+        </Line>
+        <Line>
+          <RecordID>2</RecordID>
+          <AccountID>2710</AccountID>
+          <Description>Dekorasjon arrangement - BLOMSTERBUTIKKEN LILLEBY</Description>
+          <DebitAmount>
+            <Amount>90.00</Amount>
+          </DebitAmount>
+        </Line>
+        <Line>
+          <RecordID>3</RecordID>
+          <AccountID>1921</AccountID>
+          <Description>Dekorasjon arrangement - BLOMSTERBUTIKKEN LILLEBY</Description>
+          <CreditAmount>
+            <Amount>450.00</Amount>
+          </CreditAmount>
+        </Line>
+      </Transaction>
+      <Transaction>
+        <TransactionID>6</TransactionID>
+        <Period>7</Period>
+        <PeriodYear>2026</PeriodYear>
+        <TransactionDate>2026-07-10</TransactionDate>
+        <Description>Overføring mellom egne kontoer 1920 -&gt; 1921</Description>
+        <SystemEntryDate>2026-09-30</SystemEntryDate>
+        <GLPostingDate>2026-07-10</GLPostingDate>
+        <Line>
+          <RecordID>1</RecordID>
+          <AccountID>1921</AccountID>
+          <Description>Overføring mellom egne kontoer 1920 -&gt; 1921</Description>
+          <DebitAmount>
+            <Amount>5000.00</Amount>
+          </DebitAmount>
+        </Line>
+        <Line>
+          <RecordID>2</RecordID>
+          <AccountID>1920</AccountID>
+          <Description>Overføring mellom egne kontoer 1920 -&gt; 1921</Description>
+          <CreditAmount>
+            <Amount>5000.00</Amount>
+          </CreditAmount>
+        </Line>
+      </Transaction>
+      <Transaction>
+        <TransactionID>7</TransactionID>
+        <Period>7</Period>
+        <PeriodYear>2026</PeriodYear>
+        <TransactionDate>2026-07-12</TransactionDate>
+        <Description>Privat uttak: BENSINSTASJON LILLEBY (Visa varekjøp/uttak)</Description>
+        <SystemEntryDate>2026-09-30</SystemEntryDate>
+        <GLPostingDate>2026-07-12</GLPostingDate>
+        <Line>
+          <RecordID>1</RecordID>
+          <AccountID>2050</AccountID>
+          <Description>Privat uttak: BENSINSTASJON LILLEBY (Visa varekjøp/uttak)</Description>
+          <DebitAmount>
+            <Amount>650.00</Amount>
+          </DebitAmount>
+        </Line>
+        <Line>
+          <RecordID>2</RecordID>
+          <AccountID>1921</AccountID>
+          <Description>Privat uttak: BENSINSTASJON LILLEBY (Visa varekjøp/uttak)</Description>
+          <CreditAmount>
+            <Amount>650.00</Amount>
+          </CreditAmount>
+        </Line>
+      </Transaction>
+      <Transaction>
+        <TransactionID>8</TransactionID>
+        <Period>7</Period>
+        <PeriodYear>2026</PeriodYear>
+        <TransactionDate>2026-07-15</TransactionDate>
+        <Description>Kortsalg 2026-07-15 (kortterminal)</Description>
+        <SystemEntryDate>2026-09-30</SystemEntryDate>
+        <GLPostingDate>2026-07-15</GLPostingDate>
+        <Line>
+          <RecordID>1</RecordID>
+          <AccountID>3000</AccountID>
+          <Description>Kortsalg 2026-07-15 (kortterminal)</Description>
+          <CreditAmount>
+            <Amount>8000.00</Amount>
+          </CreditAmount>
+          <TaxInformation>
+            <TaxType>MVA</TaxType>
+            <TaxCode>3</TaxCode>
+            <TaxPercentage>25</TaxPercentage>
+            <Country>NO</Country>
+            <TaxBase>8000.00</TaxBase>
+            <CreditTaxAmount>
+              <Amount>2000.00</Amount>
+            </CreditTaxAmount>
+          </TaxInformation>
+        </Line>
+        <Line>
+          <RecordID>2</RecordID>
+          <AccountID>2700</AccountID>
+          <Description>Kortsalg 2026-07-15 (kortterminal)</Description>
+          <CreditAmount>
+            <Amount>2000.00</Amount>
+          </CreditAmount>
+        </Line>
+        <Line>
+          <RecordID>3</RecordID>
+          <AccountID>1580</AccountID>
+          <Description>Kortsalg 2026-07-15 (kortterminal)</Description>
+          <DebitAmount>
+            <Amount>10000.00</Amount>
+          </DebitAmount>
+        </Line>
+      </Transaction>
+      <Transaction>
+        <TransactionID>9</TransactionID>
+        <Period>7</Period>
+        <PeriodYear>2026</PeriodYear>
+        <TransactionDate>2026-07-15</TransactionDate>
+        <Description>Privat uttak: STRØMMETJENESTE (Visa varekjøp/uttak)</Description>
+        <SystemEntryDate>2026-09-30</SystemEntryDate>
+        <GLPostingDate>2026-07-15</GLPostingDate>
+        <Line>
+          <RecordID>1</RecordID>
+          <AccountID>2050</AccountID>
+          <Description>Privat uttak: STRØMMETJENESTE (Visa varekjøp/uttak)</Description>
+          <DebitAmount>
+            <Amount>99.00</Amount>
+          </DebitAmount>
+        </Line>
+        <Line>
+          <RecordID>2</RecordID>
+          <AccountID>1921</AccountID>
+          <Description>Privat uttak: STRØMMETJENESTE (Visa varekjøp/uttak)</Description>
+          <CreditAmount>
+            <Amount>99.00</Amount>
+          </CreditAmount>
+        </Line>
+      </Transaction>
+      <Transaction>
+        <TransactionID>10</TransactionID>
+        <Period>7</Period>
+        <PeriodYear>2026</PeriodYear>
+        <TransactionDate>2026-07-15</TransactionDate>
+        <Description>Privat uttak: STRØMMETJENESTE (Visa varekjøp/uttak)</Description>
+        <SystemEntryDate>2026-09-30</SystemEntryDate>
+        <GLPostingDate>2026-07-15</GLPostingDate>
+        <Line>
+          <RecordID>1</RecordID>
+          <AccountID>2050</AccountID>
+          <Description>Privat uttak: STRØMMETJENESTE (Visa varekjøp/uttak)</Description>
+          <DebitAmount>
+            <Amount>99.00</Amount>
+          </DebitAmount>
+        </Line>
+        <Line>
+          <RecordID>2</RecordID>
+          <AccountID>1921</AccountID>
+          <Description>Privat uttak: STRØMMETJENESTE (Visa varekjøp/uttak)</Description>
+          <CreditAmount>
+            <Amount>99.00</Amount>
+          </CreditAmount>
+        </Line>
+      </Transaction>
+      <Transaction>
+        <TransactionID>11</TransactionID>
+        <Period>7</Period>
+        <PeriodYear>2026</PeriodYear>
+        <TransactionDate>2026-07-17</TransactionDate>
+        <Description>Kortoppgjør 2026-07-17 utbetaling</Description>
+        <SystemEntryDate>2026-09-30</SystemEntryDate>
+        <GLPostingDate>2026-07-17</GLPostingDate>
+        <Line>
+          <RecordID>1</RecordID>
+          <AccountID>1580</AccountID>
+          <Description>Kortoppgjør 2026-07-17 utbetaling</Description>
+          <CreditAmount>
+            <Amount>9800.00</Amount>
+          </CreditAmount>
+        </Line>
+        <Line>
+          <RecordID>2</RecordID>
+          <AccountID>1920</AccountID>
+          <Description>Kortoppgjør 2026-07-17 utbetaling</Description>
+          <DebitAmount>
+            <Amount>9800.00</Amount>
+          </DebitAmount>
+        </Line>
+        <Line>
+          <RecordID>3</RecordID>
+          <AccountID>7770</AccountID>
+          <Description>Kortgebyr for oppgjør 2026-07-17</Description>
+          <DebitAmount>
+            <Amount>200.00</Amount>
+          </DebitAmount>
+          <TaxInformation>
+            <TaxType>MVA</TaxType>
+            <TaxCode>0</TaxCode>
+            <TaxPercentage>0</TaxPercentage>
+            <Country>NO</Country>
+            <TaxBase>200.00</TaxBase>
+            <DebitTaxAmount>
+              <Amount>0.00</Amount>
+            </DebitTaxAmount>
+          </TaxInformation>
+        </Line>
+        <Line>
+          <RecordID>4</RecordID>
+          <AccountID>1580</AccountID>
+          <Description>Kortgebyr for oppgjør 2026-07-17</Description>
+          <CreditAmount>
+            <Amount>200.00</Amount>
+          </CreditAmount>
+        </Line>
+      </Transaction>
+      <Transaction>
+        <TransactionID>12</TransactionID>
+        <Period>7</Period>
+        <PeriodYear>2026</PeriodYear>
+        <TransactionDate>2026-07-21</TransactionDate>
+        <Description>Faktura 1007 Fjellheim Kulturlag</Description>
+        <SystemEntryDate>2026-09-30</SystemEntryDate>
+        <GLPostingDate>2026-07-21</GLPostingDate>
+        <Line>
+          <RecordID>1</RecordID>
+          <AccountID>3000</AccountID>
+          <Description>Faktura 1007 Fjellheim Kulturlag</Description>
+          <CreditAmount>
+            <Amount>1816.00</Amount>
+          </CreditAmount>
+          <TaxInformation>
+            <TaxType>MVA</TaxType>
+            <TaxCode>3</TaxCode>
+            <TaxPercentage>25</TaxPercentage>
+            <Country>NO</Country>
+            <TaxBase>1816.00</TaxBase>
+            <CreditTaxAmount>
+              <Amount>454.00</Amount>
+            </CreditTaxAmount>
+          </TaxInformation>
+          <ReferenceNumber>1007</ReferenceNumber>
+        </Line>
+        <Line>
+          <RecordID>2</RecordID>
+          <AccountID>2700</AccountID>
+          <Description>Faktura 1007 Fjellheim Kulturlag</Description>
+          <CreditAmount>
+            <Amount>454.00</Amount>
+          </CreditAmount>
+          <ReferenceNumber>1007</ReferenceNumber>
+        </Line>
+        <Line>
+          <RecordID>3</RecordID>
+          <AccountID>1500</AccountID>
+          <CustomerID>K001</CustomerID>
+          <Description>Faktura 1007 Fjellheim Kulturlag</Description>
+          <DebitAmount>
+            <Amount>2270.00</Amount>
+          </DebitAmount>
+          <ReferenceNumber>1007</ReferenceNumber>
+        </Line>
+      </Transaction>
+      <Transaction>
+        <TransactionID>13</TransactionID>
+        <Period>7</Period>
+        <PeriodYear>2026</PeriodYear>
+        <TransactionDate>2026-07-22</TransactionDate>
+        <Description>Engangsartikler - DAGLIGVARE LILLEBY</Description>
+        <SystemEntryDate>2026-09-30</SystemEntryDate>
+        <GLPostingDate>2026-07-22</GLPostingDate>
+        <Line>
+          <RecordID>1</RecordID>
+          <AccountID>6550</AccountID>
+          <Description>Engangsartikler - DAGLIGVARE LILLEBY</Description>
+          <DebitAmount>
+            <Amount>250.00</Amount>
+          </DebitAmount>
+          <TaxInformation>
+            <TaxType>MVA</TaxType>
+            <TaxCode>1</TaxCode>
+            <TaxPercentage>25</TaxPercentage>
+            <Country>NO</Country>
+            <TaxBase>250.00</TaxBase>
+            <DebitTaxAmount>
+              <Amount>62.50</Amount>
+            </DebitTaxAmount>
+          </TaxInformation>
+        </Line>
+        <Line>
+          <RecordID>2</RecordID>
+          <AccountID>2710</AccountID>
+          <Description>Engangsartikler - DAGLIGVARE LILLEBY</Description>
+          <DebitAmount>
+            <Amount>62.50</Amount>
+          </DebitAmount>
+        </Line>
+        <Line>
+          <RecordID>3</RecordID>
+          <AccountID>1921</AccountID>
+          <Description>Engangsartikler - DAGLIGVARE LILLEBY</Description>
+          <CreditAmount>
+            <Amount>312.50</Amount>
+          </CreditAmount>
+        </Line>
+      </Transaction>
+      <Transaction>
+        <TransactionID>14</TransactionID>
+        <Period>7</Period>
+        <PeriodYear>2026</PeriodYear>
+        <TransactionDate>2026-07-27</TransactionDate>
+        <Description>Faktura 1008 Eksempel AS</Description>
+        <SystemEntryDate>2026-09-30</SystemEntryDate>
+        <GLPostingDate>2026-07-27</GLPostingDate>
+        <Line>
+          <RecordID>1</RecordID>
+          <AccountID>3000</AccountID>
+          <Description>Faktura 1008 Eksempel AS</Description>
+          <CreditAmount>
+            <Amount>24209.00</Amount>
+          </CreditAmount>
+          <TaxInformation>
+            <TaxType>MVA</TaxType>
+            <TaxCode>3</TaxCode>
+            <TaxPercentage>25</TaxPercentage>
+            <Country>NO</Country>
+            <TaxBase>24209.00</TaxBase>
+            <CreditTaxAmount>
+              <Amount>6052.25</Amount>
+            </CreditTaxAmount>
+          </TaxInformation>
+          <ReferenceNumber>1008</ReferenceNumber>
+        </Line>
+        <Line>
+          <RecordID>2</RecordID>
+          <AccountID>2700</AccountID>
+          <Description>Faktura 1008 Eksempel AS</Description>
+          <CreditAmount>
+            <Amount>6052.25</Amount>
+          </CreditAmount>
+          <ReferenceNumber>1008</ReferenceNumber>
+        </Line>
+        <Line>
+          <RecordID>3</RecordID>
+          <AccountID>1500</AccountID>
+          <CustomerID>K002</CustomerID>
+          <Description>Faktura 1008 Eksempel AS</Description>
+          <DebitAmount>
+            <Amount>30261.25</Amount>
+          </DebitAmount>
+          <ReferenceNumber>1008</ReferenceNumber>
+        </Line>
+      </Transaction>
+      <Transaction>
+        <TransactionID>15</TransactionID>
+        <Period>7</Period>
+        <PeriodYear>2026</PeriodYear>
+        <TransactionDate>2026-07-29</TransactionDate>
+        <Description>Innbetaling faktura 1008 Eksempel AS</Description>
+        <SystemEntryDate>2026-09-30</SystemEntryDate>
+        <GLPostingDate>2026-07-29</GLPostingDate>
+        <Line>
+          <RecordID>1</RecordID>
+          <AccountID>1500</AccountID>
+          <CustomerID>K002</CustomerID>
+          <Description>Innbetaling faktura 1008 Eksempel AS</Description>
+          <CreditAmount>
+            <Amount>30261.25</Amount>
+          </CreditAmount>
+          <ReferenceNumber>1008</ReferenceNumber>
+        </Line>
+        <Line>
+          <RecordID>2</RecordID>
+          <AccountID>1920</AccountID>
+          <Description>Innbetaling faktura 1008 Eksempel AS</Description>
+          <DebitAmount>
+            <Amount>30261.25</Amount>
+          </DebitAmount>
+          <ReferenceNumber>1008</ReferenceNumber>
+        </Line>
+      </Transaction>
+      <Transaction>
+        <TransactionID>16</TransactionID>
+        <Period>8</Period>
+        <PeriodYear>2026</PeriodYear>
+        <TransactionDate>2026-08-02</TransactionDate>
+        <Description>Privat uttak: PARKERING LILLEBY (Visa varekjøp/uttak)</Description>
+        <SystemEntryDate>2026-09-30</SystemEntryDate>
+        <GLPostingDate>2026-08-02</GLPostingDate>
+        <Line>
+          <RecordID>1</RecordID>
+          <AccountID>2050</AccountID>
+          <Description>Privat uttak: PARKERING LILLEBY (Visa varekjøp/uttak)</Description>
+          <DebitAmount>
+            <Amount>30.00</Amount>
+          </DebitAmount>
+        </Line>
+        <Line>
+          <RecordID>2</RecordID>
+          <AccountID>1921</AccountID>
+          <Description>Privat uttak: PARKERING LILLEBY (Visa varekjøp/uttak)</Description>
+          <CreditAmount>
+            <Amount>30.00</Amount>
+          </CreditAmount>
+        </Line>
+      </Transaction>
+      <Transaction>
+        <TransactionID>17</TransactionID>
+        <Period>8</Period>
+        <PeriodYear>2026</PeriodYear>
+        <TransactionDate>2026-08-02</TransactionDate>
+        <Description>Privat uttak: PARKERING LILLEBY (Visa varekjøp/uttak)</Description>
+        <SystemEntryDate>2026-09-30</SystemEntryDate>
+        <GLPostingDate>2026-08-02</GLPostingDate>
+        <Line>
+          <RecordID>1</RecordID>
+          <AccountID>2050</AccountID>
+          <Description>Privat uttak: PARKERING LILLEBY (Visa varekjøp/uttak)</Description>
+          <DebitAmount>
+            <Amount>30.00</Amount>
+          </DebitAmount>
+        </Line>
+        <Line>
+          <RecordID>2</RecordID>
+          <AccountID>1921</AccountID>
+          <Description>Privat uttak: PARKERING LILLEBY (Visa varekjøp/uttak)</Description>
+          <CreditAmount>
+            <Amount>30.00</Amount>
+          </CreditAmount>
+        </Line>
+      </Transaction>
+      <Transaction>
+        <TransactionID>18</TransactionID>
+        <Period>8</Period>
+        <PeriodYear>2026</PeriodYear>
+        <TransactionDate>2026-08-05</TransactionDate>
+        <Description>Vendor Ltd kjøkkenutstyr</Description>
+        <SystemEntryDate>2026-09-30</SystemEntryDate>
+        <GLPostingDate>2026-08-05</GLPostingDate>
+        <Line>
+          <RecordID>1</RecordID>
+          <AccountID>6540</AccountID>
+          <Description>Vendor Ltd kjøkkenutstyr</Description>
+          <DebitAmount>
+            <Amount>4210.20</Amount>
+          </DebitAmount>
+          <TaxInformation>
+            <TaxType>MVA</TaxType>
+            <TaxCode>1</TaxCode>
+            <TaxPercentage>25</TaxPercentage>
+            <Country>NO</Country>
+            <TaxBase>4210.20</TaxBase>
+            <DebitTaxAmount>
+              <Amount>1052.64</Amount>
+            </DebitTaxAmount>
+          </TaxInformation>
+        </Line>
+        <Line>
+          <RecordID>2</RecordID>
+          <AccountID>2710</AccountID>
+          <Description>Vendor Ltd kjøkkenutstyr</Description>
+          <DebitAmount>
+            <Amount>1052.64</Amount>
+          </DebitAmount>
+        </Line>
+        <Line>
+          <RecordID>3</RecordID>
+          <AccountID>1921</AccountID>
+          <Description>Vendor Ltd kjøkkenutstyr</Description>
+          <CreditAmount>
+            <Amount>5262.84</Amount>
+          </CreditAmount>
+        </Line>
+      </Transaction>
+      <Transaction>
+        <TransactionID>19</TransactionID>
+        <Period>8</Period>
+        <PeriodYear>2026</PeriodYear>
+        <TransactionDate>2026-08-10</TransactionDate>
+        <Description>Nærbutikken Lilleby - råvarer</Description>
+        <SystemEntryDate>2026-09-30</SystemEntryDate>
+        <GLPostingDate>2026-08-10</GLPostingDate>
+        <Line>
+          <RecordID>1</RecordID>
+          <AccountID>4300</AccountID>
+          <Description>Nærbutikken Lilleby - råvarer</Description>
+          <DebitAmount>
+            <Amount>735.04</Amount>
+          </DebitAmount>
+          <TaxInformation>
+            <TaxType>MVA</TaxType>
+            <TaxCode>11</TaxCode>
+            <TaxPercentage>15</TaxPercentage>
+            <Country>NO</Country>
+            <TaxBase>735.04</TaxBase>
+            <DebitTaxAmount>
+              <Amount>110.26</Amount>
+            </DebitTaxAmount>
+          </TaxInformation>
+        </Line>
+        <Line>
+          <RecordID>2</RecordID>
+          <AccountID>2711</AccountID>
+          <Description>Nærbutikken Lilleby - råvarer</Description>
+          <DebitAmount>
+            <Amount>110.26</Amount>
+          </DebitAmount>
+        </Line>
+        <Line>
+          <RecordID>3</RecordID>
+          <AccountID>1921</AccountID>
+          <Description>Nærbutikken Lilleby - råvarer</Description>
+          <CreditAmount>
+            <Amount>845.30</Amount>
+          </CreditAmount>
+        </Line>
+      </Transaction>
+      <Transaction>
+        <TransactionID>20</TransactionID>
+        <Period>8</Period>
+        <PeriodYear>2026</PeriodYear>
+        <TransactionDate>2026-08-12</TransactionDate>
+        <Description>Privat uttak: BUSS LILLEBY (Visa varekjøp/uttak)</Description>
+        <SystemEntryDate>2026-09-30</SystemEntryDate>
+        <GLPostingDate>2026-08-12</GLPostingDate>
+        <Line>
+          <RecordID>1</RecordID>
+          <AccountID>2050</AccountID>
+          <Description>Privat uttak: BUSS LILLEBY (Visa varekjøp/uttak)</Description>
+          <DebitAmount>
+            <Amount>40.00</Amount>
+          </DebitAmount>
+        </Line>
+        <Line>
+          <RecordID>2</RecordID>
+          <AccountID>1921</AccountID>
+          <Description>Privat uttak: BUSS LILLEBY (Visa varekjøp/uttak)</Description>
+          <CreditAmount>
+            <Amount>40.00</Amount>
+          </CreditAmount>
+        </Line>
+      </Transaction>
+      <Transaction>
+        <TransactionID>21</TransactionID>
+        <Period>8</Period>
+        <PeriodYear>2026</PeriodYear>
+        <TransactionDate>2026-08-12</TransactionDate>
+        <Description>Privat uttak: BUSS LILLEBY (Visa varekjøp/uttak)</Description>
+        <SystemEntryDate>2026-09-30</SystemEntryDate>
+        <GLPostingDate>2026-08-12</GLPostingDate>
+        <Line>
+          <RecordID>1</RecordID>
+          <AccountID>2050</AccountID>
+          <Description>Privat uttak: BUSS LILLEBY (Visa varekjøp/uttak)</Description>
+          <DebitAmount>
+            <Amount>40.00</Amount>
+          </DebitAmount>
+        </Line>
+        <Line>
+          <RecordID>2</RecordID>
+          <AccountID>1921</AccountID>
+          <Description>Privat uttak: BUSS LILLEBY (Visa varekjøp/uttak)</Description>
+          <CreditAmount>
+            <Amount>40.00</Amount>
+          </CreditAmount>
+        </Line>
+      </Transaction>
+      <Transaction>
+        <TransactionID>22</TransactionID>
+        <Period>8</Period>
+        <PeriodYear>2026</PeriodYear>
+        <TransactionDate>2026-08-12</TransactionDate>
+        <Description>Privat uttak: BUSS LILLEBY (Visa varekjøp/uttak)</Description>
+        <SystemEntryDate>2026-09-30</SystemEntryDate>
+        <GLPostingDate>2026-08-12</GLPostingDate>
+        <Line>
+          <RecordID>1</RecordID>
+          <AccountID>2050</AccountID>
+          <Description>Privat uttak: BUSS LILLEBY (Visa varekjøp/uttak)</Description>
+          <DebitAmount>
+            <Amount>40.00</Amount>
+          </DebitAmount>
+        </Line>
+        <Line>
+          <RecordID>2</RecordID>
+          <AccountID>1921</AccountID>
+          <Description>Privat uttak: BUSS LILLEBY (Visa varekjøp/uttak)</Description>
+          <CreditAmount>
+            <Amount>40.00</Amount>
+          </CreditAmount>
+        </Line>
+      </Transaction>
+      <Transaction>
+        <TransactionID>23</TransactionID>
+        <Period>8</Period>
+        <PeriodYear>2026</PeriodYear>
+        <TransactionDate>2026-08-18</TransactionDate>
+        <Description>Bankgebyr</Description>
+        <SystemEntryDate>2026-09-30</SystemEntryDate>
+        <GLPostingDate>2026-08-18</GLPostingDate>
+        <Line>
+          <RecordID>1</RecordID>
+          <AccountID>7770</AccountID>
+          <Description>Bankgebyr</Description>
+          <DebitAmount>
+            <Amount>45.00</Amount>
+          </DebitAmount>
+          <TaxInformation>
+            <TaxType>MVA</TaxType>
+            <TaxCode>0</TaxCode>
+            <TaxPercentage>0</TaxPercentage>
+            <Country>NO</Country>
+            <TaxBase>45.00</TaxBase>
+            <DebitTaxAmount>
+              <Amount>0.00</Amount>
+            </DebitTaxAmount>
+          </TaxInformation>
+        </Line>
+        <Line>
+          <RecordID>2</RecordID>
+          <AccountID>1920</AccountID>
+          <Description>Bankgebyr</Description>
+          <CreditAmount>
+            <Amount>45.00</Amount>
+          </CreditAmount>
+        </Line>
+      </Transaction>
+      <Transaction>
+        <TransactionID>24</TransactionID>
+        <Period>8</Period>
+        <PeriodYear>2026</PeriodYear>
+        <TransactionDate>2026-08-21</TransactionDate>
+        <Description>Innbetaling faktura 1007 Fjellheim Kulturlag</Description>
+        <SystemEntryDate>2026-09-30</SystemEntryDate>
+        <GLPostingDate>2026-08-21</GLPostingDate>
+        <Line>
+          <RecordID>1</RecordID>
+          <AccountID>1500</AccountID>
+          <CustomerID>K001</CustomerID>
+          <Description>Innbetaling faktura 1007 Fjellheim Kulturlag</Description>
+          <CreditAmount>
+            <Amount>2270.00</Amount>
+          </CreditAmount>
+          <ReferenceNumber>1007</ReferenceNumber>
+        </Line>
+        <Line>
+          <RecordID>2</RecordID>
+          <AccountID>1920</AccountID>
+          <Description>Innbetaling faktura 1007 Fjellheim Kulturlag</Description>
+          <DebitAmount>
+            <Amount>2270.00</Amount>
+          </DebitAmount>
+          <ReferenceNumber>1007</ReferenceNumber>
+        </Line>
+      </Transaction>
+      <Transaction>
+        <TransactionID>25</TransactionID>
+        <Period>8</Period>
+        <PeriodYear>2026</PeriodYear>
+        <TransactionDate>2026-08-25</TransactionDate>
+        <Description>Nærbutikken Lilleby - råvarer</Description>
+        <SystemEntryDate>2026-09-30</SystemEntryDate>
+        <GLPostingDate>2026-08-25</GLPostingDate>
+        <Line>
+          <RecordID>1</RecordID>
+          <AccountID>4300</AccountID>
+          <Description>Nærbutikken Lilleby - råvarer</Description>
+          <DebitAmount>
+            <Amount>1111.65</Amount>
+          </DebitAmount>
+          <TaxInformation>
+            <TaxType>MVA</TaxType>
+            <TaxCode>11</TaxCode>
+            <TaxPercentage>15</TaxPercentage>
+            <Country>NO</Country>
+            <TaxBase>1111.65</TaxBase>
+            <DebitTaxAmount>
+              <Amount>166.75</Amount>
+            </DebitTaxAmount>
+          </TaxInformation>
+        </Line>
+        <Line>
+          <RecordID>2</RecordID>
+          <AccountID>2711</AccountID>
+          <Description>Nærbutikken Lilleby - råvarer</Description>
+          <DebitAmount>
+            <Amount>166.75</Amount>
+          </DebitAmount>
+        </Line>
+        <Line>
+          <RecordID>3</RecordID>
+          <AccountID>1921</AccountID>
+          <Description>Nærbutikken Lilleby - råvarer</Description>
+          <CreditAmount>
+            <Amount>1278.40</Amount>
+          </CreditAmount>
+        </Line>
+      </Transaction>
+      <Transaction>
+        <TransactionID>26</TransactionID>
+        <Period>8</Period>
+        <PeriodYear>2026</PeriodYear>
+        <TransactionDate>2026-08-28</TransactionDate>
+        <Description>Faktura 1009 Eksempel AS</Description>
+        <SystemEntryDate>2026-09-30</SystemEntryDate>
+        <GLPostingDate>2026-08-28</GLPostingDate>
+        <Line>
+          <RecordID>1</RecordID>
+          <AccountID>3000</AccountID>
+          <Description>Faktura 1009 Eksempel AS</Description>
+          <CreditAmount>
+            <Amount>23646.00</Amount>
+          </CreditAmount>
+          <TaxInformation>
+            <TaxType>MVA</TaxType>
+            <TaxCode>3</TaxCode>
+            <TaxPercentage>25</TaxPercentage>
+            <Country>NO</Country>
+            <TaxBase>23646.00</TaxBase>
+            <CreditTaxAmount>
+              <Amount>5911.50</Amount>
+            </CreditTaxAmount>
+          </TaxInformation>
+          <ReferenceNumber>1009</ReferenceNumber>
+        </Line>
+        <Line>
+          <RecordID>2</RecordID>
+          <AccountID>2700</AccountID>
+          <Description>Faktura 1009 Eksempel AS</Description>
+          <CreditAmount>
+            <Amount>5911.50</Amount>
+          </CreditAmount>
+          <ReferenceNumber>1009</ReferenceNumber>
+        </Line>
+        <Line>
+          <RecordID>3</RecordID>
+          <AccountID>1500</AccountID>
+          <CustomerID>K002</CustomerID>
+          <Description>Faktura 1009 Eksempel AS</Description>
+          <DebitAmount>
+            <Amount>29557.50</Amount>
+          </DebitAmount>
+          <ReferenceNumber>1009</ReferenceNumber>
+        </Line>
+      </Transaction>
+      <Transaction>
+        <TransactionID>27</TransactionID>
+        <Period>8</Period>
+        <PeriodYear>2026</PeriodYear>
+        <TransactionDate>2026-08-28</TransactionDate>
+        <Description>Overføring mellom egne kontoer 1920 -&gt; 1921</Description>
+        <SystemEntryDate>2026-09-30</SystemEntryDate>
+        <GLPostingDate>2026-08-28</GLPostingDate>
+        <Line>
+          <RecordID>1</RecordID>
+          <AccountID>1921</AccountID>
+          <Description>Overføring mellom egne kontoer 1920 -&gt; 1921</Description>
+          <DebitAmount>
+            <Amount>2270.00</Amount>
+          </DebitAmount>
+        </Line>
+        <Line>
+          <RecordID>2</RecordID>
+          <AccountID>1920</AccountID>
+          <Description>Overføring mellom egne kontoer 1920 -&gt; 1921</Description>
+          <CreditAmount>
+            <Amount>2270.00</Amount>
+          </CreditAmount>
+        </Line>
+      </Transaction>
+      <Transaction>
+        <TransactionID>28</TransactionID>
+        <Period>8</Period>
+        <PeriodYear>2026</PeriodYear>
+        <TransactionDate>2026-08-31</TransactionDate>
+        <Description>Innbetaling faktura 1009 Eksempel AS</Description>
+        <SystemEntryDate>2026-09-30</SystemEntryDate>
+        <GLPostingDate>2026-08-31</GLPostingDate>
+        <Line>
+          <RecordID>1</RecordID>
+          <AccountID>1500</AccountID>
+          <CustomerID>K002</CustomerID>
+          <Description>Innbetaling faktura 1009 Eksempel AS</Description>
+          <CreditAmount>
+            <Amount>29557.50</Amount>
+          </CreditAmount>
+          <ReferenceNumber>1009</ReferenceNumber>
+        </Line>
+        <Line>
+          <RecordID>2</RecordID>
+          <AccountID>1920</AccountID>
+          <Description>Innbetaling faktura 1009 Eksempel AS</Description>
+          <DebitAmount>
+            <Amount>29557.50</Amount>
+          </DebitAmount>
+          <ReferenceNumber>1009</ReferenceNumber>
+        </Line>
+      </Transaction>
+      <Transaction>
+        <TransactionID>29</TransactionID>
+        <Period>8</Period>
+        <PeriodYear>2026</PeriodYear>
+        <TransactionDate>2026-08-31</TransactionDate>
+        <Description>Privat uttak: DAGLIGVARE LILLEBY (Visa varekjøp/uttak)</Description>
+        <SystemEntryDate>2026-09-30</SystemEntryDate>
+        <GLPostingDate>2026-08-31</GLPostingDate>
+        <Line>
+          <RecordID>1</RecordID>
+          <AccountID>2050</AccountID>
+          <Description>Privat uttak: DAGLIGVARE LILLEBY (Visa varekjøp/uttak)</Description>
+          <DebitAmount>
+            <Amount>199.10</Amount>
+          </DebitAmount>
+        </Line>
+        <Line>
+          <RecordID>2</RecordID>
+          <AccountID>1921</AccountID>
+          <Description>Privat uttak: DAGLIGVARE LILLEBY (Visa varekjøp/uttak)</Description>
+          <CreditAmount>
+            <Amount>199.10</Amount>
+          </CreditAmount>
+        </Line>
+      </Transaction>
+    </Journal>
+  </GeneralLedgerEntries>
+</AuditFile>
