@@ -169,7 +169,7 @@ beforeEach(async () => {
 });
 afterAll(dropTestDb);
 
-type Line = { account: string; amount: number; party?: string; vat_code?: string; vat_base?: number };
+type Line = { account: string; amount: number; party?: string; vat_code?: string; vat_base?: number; vat_amount?: number | string };
 
 async function post(entity: string, key: string, posting_date: string, lines: Line[]) {
   const [r] = await sql`select post_voucher(${{ entity, posting_date, description: key, idempotency_key: key, lines }}::jsonb) as r`;
@@ -365,6 +365,96 @@ describe("mva_term", () => {
 });
 
 // ---------------------------------------------------------------------------
+// ADR-0012: the base line may state the VAT on the document (vat_amount).
+
+async function pgError(p: Promise<unknown>): Promise<string> {
+  try {
+    await p;
+  } catch (e) {
+    return (e as Error).message;
+  }
+  throw new Error("expected a database error, but the statement succeeded");
+}
+
+/** A domestic purchase: base on 6300, the VAT (stated or as given) on 2710. */
+const purchase = (key: string, base: number, vat: number, extra: Partial<Line> = {}) =>
+  post(E, key, "2026-03-10", [
+    { account: "6300", amount: base, vat_code: "1", vat_base: base, ...extra },
+    { account: "2710", amount: vat },
+    { account: "2400", amount: -(base + vat), party: "L1" },
+  ]);
+
+describe("stated vat_amount (ADR-0012)", () => {
+  beforeEach(async () => {
+    await sql`select bootstrap_entity(${{ orgnr: E, name: "Demo AS", vat_registered: true, year: 2026 }}::jsonb)`;
+    await sql`select upsert_party(${{ entity: E, id: "L1", name: "Leverandør AS", supplier: true }}::jsonb)`;
+  });
+
+  test("stated beats derived in vat_summary, mva_term and the melding; unstated lines still derive", async () => {
+    await purchase("stated", 421020, 105264, { vat_amount: 105264 }); // derived 105255
+    await purchase("derived", 10000, 2500);
+    await post(E, "sale", "2026-03-11", [ // a sale stating its VAT: signed like vat_base
+      { account: "1920", amount: 12501 },
+      { account: "3000", amount: -10000, vat_code: "3", vat_base: -10000, vat_amount: -2501 },
+      { account: "2700", amount: -2501 },
+    ]);
+    const s = await sql`select vat_code, output_vat::int, input_vat::int from vat_summary where entity = ${E} order by vat_code`;
+    expect(s).toEqual([{ vat_code: "1", output_vat: 0, input_vat: 107764 }, { vat_code: "3", output_vat: -2501, input_vat: 0 }]);
+    expect((await termRows(E, 2026, 2)).map((r: { vat_code: string; vat: number }) => [r.vat_code, r.vat]))
+      .toEqual([["1", -107764], ["3", 2501]]);
+    const [c] = await sql`select input_difference::int as i, output_difference::int as o from vat_control where entity = ${E} and period = 3`;
+    expect(c).toEqual({ i: 0, o: 0 });
+  });
+
+  test("plausibility: same sign, within max(1 krone, 1 %) of derived; zero-VAT codes state 0", async () => {
+    // derived 2500: 1 krone is the bound
+    await purchase("ok-small", 10000, 2600, { vat_amount: 2600 });
+    expect(await pgError(purchase("off-small", 10000, 2601, { vat_amount: 2601 }))).toContain("within 100 øre of it");
+    // derived 250000: 1 % (2500 øre) is the bound
+    await purchase("ok-big", 1000000, 252500, { vat_amount: 252500 });
+    expect(await pgError(purchase("off-big", 1000000, 252501, { vat_amount: 252501 }))).toContain("derives 250000");
+    // gross errors
+    expect(await pgError(purchase("ten-x", 10000, 25000, { vat_amount: 25000 }))).toContain("implausible");
+    expect(await pgError(purchase("sign", 10000, -2500, { vat_amount: -2500 }))).toContain("implausible");
+    // a zero-rated sale has no VAT to state but 0
+    expect(await pgError(post(E, "zero", "2026-03-12", [
+      { account: "1920", amount: 500000 },
+      { account: "3000", amount: -500000, vat_code: "52", vat_base: -500000, vat_amount: -1 },
+    ]))).toContain("must be 0");
+    expect((await sql`select nr from voucher where entity = ${E} order by nr`).map((r: { nr: number }) => r.nr)).toEqual([1, 2]);
+  });
+
+  test("vat_amount needs vat_code and vat_base, and must be an integer number of øre", async () => {
+    expect(await pgError(post(E, "uncoded", "2026-03-10", [
+      { account: "6300", amount: 10000, vat_amount: 2500 },
+      { account: "1920", amount: -10000 },
+    ]))).toContain("vat_amount on account 6300 needs a vat_code and vat_base");
+    expect(await pgError(purchase("frac", 10000, 2500, { vat_amount: 2500.5 }))).toContain("vat_amount must be an integer number of øre");
+    expect(await pgError(purchase("text", 10000, 2500, { vat_amount: "2500" }))).toContain("vat_amount must be an integer number of øre");
+  });
+
+  test("reverse_voucher negates vat_amount; a reversal that drops or alters it is refused; the column is append-only", async () => {
+    await purchase("orig", 421020, 105264, { vat_amount: 105264 });
+    const lines = (vat_amount?: number) => [
+      { account: "6300", amount: -421020, vat_code: "1", vat_base: -421020, ...(vat_amount === undefined ? {} : { vat_amount }) },
+      { account: "2710", amount: -105264 },
+      { account: "2400", amount: 526284, party: "L1" },
+    ];
+    for (const [key, va] of [["drop", undefined], ["alter", -105263]] as const) {
+      const err = await pgError(sql`select post_voucher(${{ entity: E, posting_date: "2026-03-20", description: key, idempotency_key: key,
+        reverses: { year: 2026, nr: 1 }, lines: lines(va) }}::jsonb)`);
+      expect(err).toContain("does not exactly negate");
+    }
+    await sql`select reverse_voucher(${E}, 2026::smallint, 1, '2026-03-20')`;
+    const [r] = await sql`select vat_amount::int as va from posting where entity = ${E} and year = 2026 and nr = 2 and line = 1`;
+    expect(r.va).toBe(-105264);
+    const [s] = await sql`select sum(input_vat)::int as i from vat_summary where entity = ${E}`;
+    expect(s.i).toBe(0);
+    expect(await pgError(sql`update posting set vat_amount = 105255 where entity = ${E} and nr = 1 and line = 1`)).toContain("append-only");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Oracle: enkelt-regnskap, 4. termin 2026 (juli-august).
 //
 // Source: ~/code/enkelt-regnskap test/fixtures/saft/bilag.csv (29 vouchers,
@@ -377,13 +467,15 @@ describe("mva_term", () => {
 //   "mva 4. termin 2026: 12 520,86 å betale, per kode":
 //     0: 245.00 / 0.00   1: 4820.20 / 1205.14   3: 57671.00 / 14417.75   11: 4611.65 / 691.75
 //   "saldo 4. termin 2026: 1920 = 61 573,75, 1921 = -2 505,04, 1580 = 0".
-// Oracle per-code VAT is the booked VAT (its lines carry the amount). Ours is
-// derived, base × rate per line (ADR-0011); the two differ on two lines, and
-// vat_control shows exactly that difference — see the test.
+// The oracle's per-code VAT is the booked VAT, the amount on the document. On
+// two lines that differs from base × rate, so those lines state it as
+// vat_amount (ADR-0012): bilag 2 (391,30, derived 391,31) and bilag 18
+// (1 052,64, derived 1 052,55). Every other line derives to the file's figure.
 const ER = "987654321";
 const ORACLE: [string, Line[]][] = [
   /*  1 */ ["2026-07-01", [{ account: "2050", amount: 21920 }, { account: "1921", amount: -21920 }]],
-  /*  2 */ ["2026-07-01", [{ account: "4300", amount: 260870, vat_code: "11", vat_base: 260870 }, { account: "2711", amount: 39130 }, { account: "2400", amount: -300000, party: "L002" }]],
+  // 2: VAT taken from the gross 3 000,00 is 391,30; 2 608,70 × 15 % = 391,305 would derive 391,31
+  /*  2 */ ["2026-07-01", [{ account: "4300", amount: 260870, vat_code: "11", vat_base: 260870, vat_amount: 39130 },{ account: "2711", amount: 39130 }, { account: "2400", amount: -300000, party: "L002" }]],
   /*  3 */ ["2026-07-03", [{ account: "2400", amount: 300000, party: "L002" }, { account: "1920", amount: -300000 }]],
   /*  4 */ ["2026-07-06", [{ account: "4300", amount: 15626, vat_code: "11", vat_base: 15626 }, { account: "2711", amount: 2344 }, { account: "1921", amount: -17970 }]],
   /*  5 */ ["2026-07-08", [{ account: "6560", amount: 36000, vat_code: "1", vat_base: 36000 }, { account: "2710", amount: 9000 }, { account: "1921", amount: -45000 }]],
@@ -400,7 +492,7 @@ const ORACLE: [string, Line[]][] = [
   /* 16 */ ["2026-08-02", [{ account: "2050", amount: 3000 }, { account: "1921", amount: -3000 }]],
   /* 17 */ ["2026-08-02", [{ account: "2050", amount: 3000 }, { account: "1921", amount: -3000 }]],
   // 18: Vendor Ltd's invoice states VAT 1052.64 on 4210.20 (25 % would be 1052.55)
-  /* 18 */ ["2026-08-05", [{ account: "6540", amount: 421020, vat_code: "1", vat_base: 421020 }, { account: "2710", amount: 105264 }, { account: "1921", amount: -526284 }]],
+  /* 18 */ ["2026-08-05", [{ account: "6540", amount: 421020, vat_code: "1", vat_base: 421020, vat_amount: 105264 },{ account: "2710", amount: 105264 }, { account: "1921", amount: -526284 }]],
   /* 19 */ ["2026-08-10", [{ account: "4300", amount: 73504, vat_code: "11", vat_base: 73504 }, { account: "2711", amount: 11026 }, { account: "1921", amount: -84530 }]],
   /* 20 */ ["2026-08-12", [{ account: "2050", amount: 4000 }, { account: "1921", amount: -4000 }]],
   /* 21 */ ["2026-08-12", [{ account: "2050", amount: 4000 }, { account: "1921", amount: -4000 }]],
@@ -436,33 +528,30 @@ describe("oracle: enkelt-regnskap 4. termin 2026", () => {
     expect(rows).toEqual([{ account: "1580", b: 0 }, { account: "1920", b: 6157375 }, { account: "1921", b: -250504 }]);
   });
 
-  test("grunnlag per code and output VAT reproduce; booked VAT reproduces 12 520,86; derived input VAT differs by the two lines vat_control names", async () => {
+  test("mva 4. termin 2026 reproduces exactly: per code, and 12 520,86 to pay; vat_control reconciles to the øre", async () => {
     await postOracle();
     expect(await termRows(ER, 2026, 4)).toEqual([
+      // oracle 0: 245.00 / 0.00
       { vat_code: "0", kind: "none", report: false, rate: "0.000", base: 24500, output_vat: 0, input_vat: 0, vat: 0 },
-      // oracle 4820.20 / 1205.14: derived 1205.05 (bilag 18: 4210.20 × 25 % = 1052.55, invoice says 1052.64)
-      { vat_code: "1", kind: "input", report: true, rate: "25.000", base: 482020, output_vat: 0, input_vat: -120505, vat: -120505 },
-      // oracle 57671.00 / 14417.75: exact
+      // oracle 1: 4820.20 / 1205.14 (bilag 18 stated)
+      { vat_code: "1", kind: "input", report: true, rate: "25.000", base: 482020, output_vat: 0, input_vat: -120514, vat: -120514 },
+      // oracle 3: 57671.00 / 14417.75 (all derived)
       { vat_code: "3", kind: "output", report: true, rate: "25.000", base: 5767100, output_vat: 1441775, input_vat: 0, vat: 1441775 },
-      // oracle 4611.65 / 691.75: derived 691.76 (bilag 2: 2608.70 × 15 % = 391.305 -> 391.31, booked 391.30 from gross)
-      { vat_code: "11", kind: "input", report: true, rate: "15.000", base: 461165, output_vat: 0, input_vat: -69176, vat: -69176 },
+      // oracle 11: 4611.65 / 691.75 (bilag 2 stated)
+      { vat_code: "11", kind: "input", report: true, rate: "15.000", base: 461165, output_vat: 0, input_vat: -69175, vat: -69175 },
     ]);
     const [d] = await sql`select sum(vat)::int as payable from mva_term where entity = ${ER} and year = 2026 and term = 4`;
-    expect(d.payable).toBe(1252094); // derived: 12 520,94
+    expect(d.payable).toBe(1252086); // 12 520,86
 
-    // vat_control: output reconciles; input is off by exactly bilag 2 (-0.01, July) and bilag 18 (+0.09, August)
+    // vat_control: reported VAT equals booked 27xx movement in both periods
     const ctl = await sql`
       select period, derived_output_vat::int as dout, booked_output_vat::int as bout, output_difference::int as odiff,
              derived_input_vat::int as din, booked_input_vat::int as bin, input_difference::int as idiff
         from vat_control where entity = ${ER} order by period`;
     expect(ctl).toEqual([
-      { period: 7, dout: -850625, bout: -850625, odiff: 0, din: 56725, bin: 56724, idiff: -1 },
-      { period: 8, dout: -591150, bout: -591150, odiff: 0, din: 132956, bin: 132965, idiff: 9 },
+      { period: 7, dout: -850625, bout: -850625, odiff: 0, din: 56724, bin: 56724, idiff: 0 },
+      { period: 8, dout: -591150, bout: -591150, odiff: 0, din: 132965, bin: 132965, idiff: 0 },
     ]);
-    // the booked figures are the oracle's: 14 417,75 - (1 205,14 + 691,75) = 12 520,86
-    const booked = ctl.reduce((s: number, r: { bout: number; bin: number }) => s - r.bout - r.bin, 0);
-    expect(booked).toBe(1252086);
-    expect(d.payable - booked).toBe(8);
   });
 
   test("the MVA-melding in whole kroner is the oracle's, rounded: 12 521", async () => {

@@ -7,7 +7,9 @@
 //
 // Shape: Skatteetaten/mva-meldingen, skattemeldingformerverdiavgift v1.0 XSD
 // (commit c1958e5) and its informasjonsmodell / forretningsregler pages,
-// fetched 2026-10-11. The rules this builder follows:
+// fetched 2026-10-11. mva_term's VAT is per line stated-else-derived,
+// coalesce(vat_amount, round(vat_base × rate)) (ADR-0012), so merverdiavgift
+// is the booked amount the XSD asks for. The rules this builder follows:
 //   - one mvaSpesifikasjonslinje per (mvaKode, sats); codes with report = false
 //     (0, 7, 20-22) never appear, and a code that nets to zero in the term is
 //     left out;

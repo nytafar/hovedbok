@@ -47,7 +47,9 @@ select * from account_year_balance where year = 2027; -- opening balances, deriv
 
 VAT coding lives on the base line (ADR-0011): `vat_code` + `vat_base` on the
 revenue/cost/asset line, nothing on the 27xx line. `vat_summary` derives the
-VAT from base × rate; `vat_control` shows where the booked 27xx movement
+VAT from base × rate, unless the line states the document's figure in
+`vat_amount` (ADR-0012; it must lie within 1 krone or 1 % of the derived
+VAT); `vat_control` shows where the booked 27xx movement
 differs. In a voucher that touches a VAT account every P&L line must carry a
 code (`"0"` when it is genuinely outside VAT). The database refuses the other
 shapes. `mva_term` rolls `vat_summary` up to the entity's VAT term
