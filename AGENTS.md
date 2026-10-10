@@ -8,7 +8,12 @@ Agent-first Norwegian accounting ledger. **Docs live in `~/hvelv/repos/hovedbok/
 ## Gate
 
 `bun run check` (tsc --noEmit + bun test). Tests need the dev database:
-`docker compose up -d db && bun run migrate`. Never merge red.
+`docker compose up -d db && bun run migrate`. Never merge red. CI
+(`.github/workflows/ci.yml`) runs the same against a postgres:17 service.
+
+DB tests use `test/helper.ts`: `freshDb()` clones a clean, just-migrated
+database (template keyed by a hash of the migrations) per call; `afterAll(dropTestDb)`.
+DATABASE_URL is only the maintenance connection — tests never touch its data.
 
 ## Load-bearing rules
 
