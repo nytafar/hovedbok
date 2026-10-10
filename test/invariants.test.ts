@@ -312,11 +312,11 @@ describe("idempotency on (entity, idempotency_key)", () => {
 
 // ---------------------------------------------------------------------------
 describe("reversals", () => {
-  // the README convention (0013 enforces it): code on both lines, base on the revenue line
+  // ADR-0011 (0017 enforces it): code and base on the revenue line, nothing on the VAT line
   const vatLines: Line[] = [
     { account: "1500", amount: 12500, party: "K1" },
     { account: "3000", amount: -10000, vat_code: "3", vat_base: -10000 },
-    { account: "2700", amount: -2500, vat_code: "3" },
+    { account: "2700", amount: -2500 },
   ];
 
   test("reverse_voucher posts the exact negation, idempotently", async () => {
@@ -491,8 +491,9 @@ describe("line checks", () => {
       voucher(key, {
         posting_date: date,
         lines: [
-          { account: "1920", amount: 2500 },
-          { account: "2700", amount: -2500, vat_code: code },
+          { account: "1920", amount: 12500 },
+          { account: "3000", amount: -10000, vat_code: code, vat_base: -10000 },
+          { account: "2700", amount: -2500 },
         ],
       });
     const err = await pgError(post(sql, line("99", "2026-06-30", "early")));

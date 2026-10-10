@@ -63,7 +63,7 @@ async function postDummyYear(db: SQL): Promise<void> {
     await post(db, `sale-${m}`, `${Y}-${mm}-15`, [
       { account: "1500", amount: 12500, party: "K1" },
       { account: "3000", amount: -10000, vat_code: "3", vat_base: -10000 },
-      { account: "2700", amount: -2500, vat_code: "3" },
+      { account: "2700", amount: -2500 },
     ]);
     await post(db, `paid-${m}`, `${Y}-${mm}-20`, [
       { account: "1920", amount: 12500 },
@@ -72,7 +72,7 @@ async function postDummyYear(db: SQL): Promise<void> {
   }
   await post(db, "cost", `${Y}-03-10`, [
     { account: "6300", amount: 8000, vat_code: "1", vat_base: 8000 },
-    { account: "2710", amount: 2000, vat_code: "1" },
+    { account: "2710", amount: 2000 },
     { account: "2400", amount: -10000, party: "L1" },
   ]);
   await post(db, "cost-paid", `${Y}-04-01`, [
@@ -145,7 +145,7 @@ describe("close_fiscal_year", () => {
     const first = await post(sql, "ny-sale", `${Y + 1}-01-10`, [
       { account: "1920", amount: 12500 },
       { account: "3000", amount: -10000, vat_code: "3", vat_base: -10000 },
-      { account: "2700", amount: -2500, vat_code: "3" },
+      { account: "2700", amount: -2500 },
     ]);
     expect(first).toEqual({ entity: E, year: Y + 1, nr: 1, idempotent: false });
     const opening = await sql`
@@ -168,7 +168,7 @@ describe("close_fiscal_year", () => {
   test("a loss goes 8800 -> 8990 -> 2080, and hand-booked dispositions ride along", async () => {
     await post(sql, "cost", `${Y}-02-01`, [
       { account: "6300", amount: 5000, vat_code: "1", vat_base: 5000 },
-      { account: "2710", amount: 1250, vat_code: "1" },
+      { account: "2710", amount: 1250 },
       { account: "1920", amount: -6250 },
     ]);
     // a dividend decided before the close (Dr 8920 / Cr 2800)
@@ -206,6 +206,51 @@ describe("close_fiscal_year", () => {
     for (let m = 1; m <= 12; m++) await sql`select close_period(${E}, 2027::smallint, ${m}::smallint)`;
     const empty = await closeYear(sql, 2027);
     expect(empty).toEqual({ entity: E, year: 2027, result: 0, equity_account: "2050", vouchers: [], period_13: "closed" });
+  });
+
+  test("exact break-even and a dividend covering the whole result leave no zero-amount lines", async () => {
+    await post(sql, "sale", `${Y}-01-15`, [{ account: "1920", amount: 100 }, { account: "3000", amount: -100 }]);
+    await post(sql, "cost", `${Y}-01-16`, [{ account: "6300", amount: 100 }, { account: "1920", amount: -100 }]);
+    await closeMonths(sql);
+    const even = await closeYear(sql);
+    expect(even).toMatchObject({ result: 0, vouchers: [3] });
+    let lines = await sql`select nr, account, amount::int from posting where entity = ${E} and year = ${Y} and nr = 3 order by line`;
+    expect(lines).toEqual([{ nr: 3, account: "3000", amount: 100 }, { nr: 3, account: "6300", amount: -100 }]);
+
+    await sql`select ensure_fiscal_year(${E}, 2027::smallint)`;
+    await post(sql, "sale27", "2027-01-15", [{ account: "1920", amount: 100 }, { account: "3000", amount: -100 }]);
+    await post(sql, "dividend27", "2027-12-31", [{ account: "8920", amount: 100 }, { account: "2800", amount: -100 }], { period: 13 });
+    for (let m = 1; m <= 12; m++) await sql`select close_period(${E}, 2027::smallint, ${m}::smallint)`;
+    const full = await closeYear(sql, 2027);
+    expect(full).toMatchObject({ result: -100, vouchers: [3, 4, 5] });
+    lines = await sql`select nr, account, amount::int from posting where entity = ${E} and year = 2027 and nr = 5 order by line`;
+    expect(lines).toEqual([{ nr: 5, account: "8920", amount: -100 }, { nr: 5, account: "8960", amount: 100 }]);
+    const after = await balances(sql);
+    expect(Object.entries(after).filter(([a]) => a >= "3000").every(([, b]) => b === 0)).toBe(true);
+    expect(after["2800"]).toBe(-100);
+  });
+
+  test("a pre-existing close:<year> key is an error, not a silent skip; the year stays open", async () => {
+    await post(sql, "sale", `${Y}-01-15`, [{ account: "1920", amount: 100 }, { account: "3000", amount: -100 }]);
+    await sql`select post_voucher(${{
+      entity: E, posting_date: `${Y}-01-20`, description: "stray", idempotency_key: `close:${Y}:transfer`,
+      lines: [{ account: "1920", amount: 1 }, { account: "1900", amount: -1 }],
+    }}::jsonb)`;
+    await closeMonths(sql);
+    const err = await pgError(closeYear(sql));
+    expect(err.message).toContain("voucher with idempotency key close:2026:transfer already exists");
+    const [p] = await sql`select status from period where entity = ${E} and year = ${Y} and nr = 13`;
+    expect(p.status).toBe("open");
+    const [n] = await sql`select count(*)::int as n from voucher where entity = ${E}`;
+    expect(n.n).toBe(2);
+  });
+
+  test("the equity account must be 2000-2099", async () => {
+    await closeMonths(sql);
+    const err = await pgError(closeYear(sql, Y, "1920"));
+    expect(err.message).toContain("equity account 1920 is not an equity account (2000-2099)");
+    const [p] = await sql`select status from period where entity = ${E} and year = ${Y} and nr = 13`;
+    expect(p.status).toBe("open");
   });
 
   test("refuses while periods 1-12 are open, and refuses a second time", async () => {
@@ -281,6 +326,22 @@ describe("upsert_account", () => {
     await sql`select upsert_account(${{ entity: E, code: "2719", default_vat: null }}::jsonb)`;
     [a] = await sql`select default_vat from account where entity = ${E} and code = '2719'`;
     expect(a.default_vat).toBeNull();
+  });
+
+  test("std_account is immutable once the account has postings", async () => {
+    await sql`select upsert_account(${{ entity: E, code: "2719", name: "Mva spesial", std_account: "2710" }}::jsonb)`;
+    await sql`select upsert_account(${{ entity: E, code: "2719", std_account: "2711" }}::jsonb)`;
+    await post(sql, "buy", `${Y}-02-01`, [
+      { account: "6300", amount: 8000, vat_code: "11", vat_base: 8000 },
+      { account: "2719", amount: 1200 },
+      { account: "1920", amount: -9200 },
+    ]);
+    const err = await pgError(sql`select upsert_account(${{ entity: E, code: "2719", std_account: "2710" }}::jsonb)`);
+    expect(err.message).toContain("account 2719 has postings; its std_account (2711) cannot change");
+    // other columns still change; the same std_account is not a change
+    await sql`select upsert_account(${{ entity: E, code: "2719", name: "Renamed", std_account: "2711" }}::jsonb)`;
+    const [a] = await sql`select name, std_account from account where entity = ${E} and code = '2719'`;
+    expect(a).toEqual({ name: "Renamed", std_account: "2711" });
   });
 
   test("validates its payload", async () => {

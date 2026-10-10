@@ -136,7 +136,7 @@ describe("bootstrap_entity", () => {
       "lines": [
         {"account": "1920", "amount": 12500},
         {"account": "3000", "amount": -10000, "vat_code": "3", "vat_base": -10000},
-        {"account": "2700", "amount": -2500, "vat_code": "3"}
+        {"account": "2700", "amount": -2500}
       ]
     }')`;
     const rows = await sql`
@@ -147,7 +147,7 @@ describe("bootstrap_entity", () => {
     ]);
   });
 
-  test("reverse charge (86) reports both effects from the VAT accounts", async () => {
+  test("reverse charge (86) derives both effects from the one coded base line", async () => {
     await bootstrap(sql);
     await sql`insert into party (entity, id, name, supplier, country) values (${E}, 'L1', 'Foreign Ltd', true, 'IE')`;
     await sql`select post_voucher(${{
@@ -158,8 +158,8 @@ describe("bootstrap_entity", () => {
       lines: [
         { account: "6540", amount: 10000, vat_code: "86", vat_base: 10000 },
         { account: "2400", amount: -10000, party: "L1" },
-        { account: "2714", amount: 2500, vat_code: "86" },
-        { account: "2704", amount: -2500, vat_code: "86" },
+        { account: "2714", amount: 2500 },
+        { account: "2704", amount: -2500 },
       ],
     }}::jsonb)`;
     const [row] = await sql`

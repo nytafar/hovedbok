@@ -29,7 +29,7 @@ select post_voucher('{
   "lines": [
     {"account": "1920", "amount": 12500},
     {"account": "3000", "amount": -10000, "vat_code": "3", "vat_base": -10000},
-    {"account": "2700", "amount": -2500, "vat_code": "3"}
+    {"account": "2700", "amount": -2500}
   ]
 }');
 
@@ -45,9 +45,12 @@ select close_fiscal_year('999888777', 2026);         -- result -> 8800 -> 896x/8
 select * from account_year_balance where year = 2027; -- opening balances, derived from the postings
 ```
 
-VAT lines follow the convention above: the code on both the base line and the
-VAT-account line, `vat_base` on the base line only. The database refuses the
-other shapes.
+VAT coding lives on the base line (ADR-0011): `vat_code` + `vat_base` on the
+revenue/cost/asset line, nothing on the 27xx line. `vat_summary` derives the
+VAT from base × rate; `vat_control` shows where the booked 27xx movement
+differs. In a voucher that touches a VAT account every P&L line must carry a
+code (`"0"` when it is genuinely outside VAT). The database refuses the other
+shapes.
 
 ## Layout
 
