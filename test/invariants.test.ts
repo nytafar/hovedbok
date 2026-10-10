@@ -30,13 +30,11 @@ async function seed(db: SQL): Promise<void> {
     insert into party (entity, id, name, customer, supplier) values
       (${E}, 'K1', 'Kunde AS', true, false),
       (${E}, 'L1', 'Leverandør AS', false, true)`;
+  // code 3 is seeded (0010); 99 is a synthetic code whose rate starts later
   await db`
     insert into vat_code (code, description, description_nb, kind) values
-      ('3', 'Output VAT, high rate', 'Utgående mva, høy sats', 'output'),
       ('99', 'Rate only from 2027', 'Sats først fra 2027', 'output')`;
-  await db`
-    insert into vat_rate (code, valid_from, rate) values
-      ('3', '2026-01-01', 25), ('99', '2027-01-01', 25)`;
+  await db`insert into vat_rate (code, valid_from, rate) values ('99', '2027-01-01', 25)`;
 }
 
 type Line = { account: string; amount: number; party?: string; vat_code?: string; vat_base?: number };
@@ -497,7 +495,7 @@ describe("line checks", () => {
       });
     const err = await pgError(post(sql, line("99", "2026-06-30", "early")));
     expect(err.message).toContain("no rate valid on 2026-06-30");
-    // a code valid from 2026-01-01 is fine on that date
+    // a code with a rate in force (seeded 3: 25 % from 2022-01-01) is fine
     expect((await post(sql, line("3", "2026-01-01", "valid"))).nr).toBe(1);
     // unknown code: the row trigger refuses it before the foreign key is checked
     const unknown = await pgError(post(sql, line("nope", "2026-06-30", "unknown")));
