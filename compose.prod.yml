@@ -1,0 +1,128 @@
+# Production stack (issue #14). The dev stack is compose.yml; this one is
+# selected by the deploy's .env: COMPOSE_FILE=compose.prod.yml. Secrets and
+# site settings come from that .env (see deploy/env.example).
+#
+# Project name is pinned so a checkout named `hovedbok` can run next to the dev
+# stack (project `hovedbok`, db on 5433) on the same host.
+#
+#   db       postgres:17, its own volume, no host port
+#   migrate  runs db/migrations as the owner, then creates the login users
+#            (db/logins.ts: hovedbok_api in hovedbok_app, hovedbok_reader in
+#            hovedbok_ro — ADR-0010); api and mcp wait for it
+#   api      src/api/serve.ts on 127.0.0.1:8550, and on the tailnet via tsdproxy
+#   mcp      src/mcp/serve.ts on 127.0.0.1:8551
+#   mcp-gw   nginx shim on the MCP gateway's network: the gateway forwards the
+#            client's Keycloak bearer verbatim, so the shim swaps in MCP_TOKEN
+#            (same shape as the gateway's own hevy-proxy)
+#
+# Backups: deploy/backup.sh (pg_dump + the documents volume), scheduled by a
+# systemd --user timer on the host.
+name: hovedbok-prod
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hovedbok
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+      POSTGRES_DB: hovedbok
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hovedbok -d hovedbok"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    build: .
+    image: hovedbok:prod
+    restart: "no"
+    command: sh -c "bun run migrate && bun db/logins.ts"
+    environment:
+      DATABASE_URL: postgres://hovedbok:${POSTGRES_PASSWORD}@db:5432/hovedbok
+      HOVEDBOK_API_PASSWORD: ${HOVEDBOK_API_PASSWORD:?set in .env}
+      HOVEDBOK_READER_PASSWORD: ${HOVEDBOK_READER_PASSWORD:?set in .env}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    image: hovedbok:prod
+    restart: unless-stopped
+    command: bun src/api/serve.ts
+    environment: &app_env
+      HOST: 0.0.0.0
+      PORT: "3000"
+      PORT_MCP: "3001"
+      API_TOKEN: ${API_TOKEN:?set in .env}
+      API_RO_TOKEN: ${API_RO_TOKEN:-}
+      MCP_TOKEN: ${MCP_TOKEN:-}
+      DATABASE_URL_APP: postgres://hovedbok_api:${HOVEDBOK_API_PASSWORD}@db:5432/hovedbok
+      DATABASE_URL_RO: postgres://hovedbok_reader:${HOVEDBOK_READER_PASSWORD}@db:5432/hovedbok
+      DOCUMENTS_DIR: /data/documents
+      # Enable Banking: unset until the owner registers an application
+      # (README "Enable Banking"); the bank routes answer 503 meanwhile.
+      ENABLE_BANKING_APP_ID: ${ENABLE_BANKING_APP_ID:-}
+      ENABLE_BANKING_KEY_FILE: ${ENABLE_BANKING_KEY_FILE:-}
+      ENABLE_BANKING_REDIRECT_URL: ${ENABLE_BANKING_REDIRECT_URL:-}
+      ENABLE_BANKING_API_URL: ${ENABLE_BANKING_API_URL:-}
+      PSU_IP_ADDRESS: ${PSU_IP_ADDRESS:-}
+      PSU_USER_AGENT: ${PSU_USER_AGENT:-}
+    volumes: &app_volumes
+      - documents:/data/documents
+      - ./secrets:/secrets:ro
+    ports:
+      - "127.0.0.1:8550:3000"
+    # Its own tailnet node, https://hovedbok.<tailnet>.ts.net, created by
+    # tsdproxy (infra/tsdproxy on the host). `default` must be listed
+    # explicitly: naming any network replaces the implicit one.
+    networks:
+      - default
+      - tsdproxy
+    labels:
+      tsdproxy.enable: "true"
+      tsdproxy.name: "hovedbok"
+      tsdproxy.container_port: "3000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  mcp:
+    image: hovedbok:prod
+    restart: unless-stopped
+    command: bun src/mcp/serve.ts
+    environment: *app_env
+    volumes: *app_volumes
+    ports:
+      - "127.0.0.1:8551:3001"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  mcp-gw:
+    image: nginx:alpine
+    restart: unless-stopped
+    environment:
+      MCP_TOKEN: ${MCP_TOKEN:?set in .env}
+    volumes:
+      - ./deploy/mcp-gw.conf.template:/etc/nginx/templates/default.conf.template:ro
+    networks:
+      default: {}
+      mcp-gateway:
+        aliases: [hovedbok-mcp]
+    depends_on:
+      - mcp
+
+volumes:
+  pgdata:
+  documents:
+
+networks:
+  tsdproxy:
+    name: tsdproxy
+    external: true
+  mcp-gateway:
+    name: ${MCP_GATEWAY_NETWORK:-mcp-gateway-registry_default}
+    external: true

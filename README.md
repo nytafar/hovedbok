@@ -189,6 +189,26 @@ bank connection for that entity the bank steps are SKIPPED (bank facts only
 arrive through sync) and the ledger loop runs alone. Prints PASS/FAIL/SKIP
 per step; exits 1 if a step failed.
 
+## Deploy
+
+`compose.prod.yml` is the production stack: postgres:17 on its own volume
+(no host port), `migrate` (migrations as the owner, then `db/logins.ts`
+creates `hovedbok_api` in `hovedbok_app` and `hovedbok_reader` in
+`hovedbok_ro`), `api` and `mcp` from the `Dockerfile` image, and `mcp-gw`,
+an nginx shim on the MCP gateway's network that swaps the gateway's bearer
+for `MCP_TOKEN`. Copy `deploy/env.example` to `.env` in the deploy checkout
+(it selects the compose file), fill in the secrets, then:
+
+```sh
+docker compose up -d --build
+deploy/backup.sh            # pg_dump + the documents volume to ~/backups/hovedbok
+deploy/backup.sh --status   # exits non-zero when the newest dump is stale
+```
+
+Enable Banking stays unset until the owner has registered an application
+(`ENABLE_BANKING_APP_ID`, `ENABLE_BANKING_KEY_FILE` → a PEM under
+`./secrets/`, mounted at `/secrets`); the bank routes answer 503 meanwhile.
+
 ## Layout
 
 - `db/migrations/` — the system: schema, invariants, commands, views

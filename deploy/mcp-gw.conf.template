@@ -1,0 +1,30 @@
+# Bearer-swapping shim between the MCP gateway and src/mcp/serve.ts.
+#
+# The gateway's auth server validates the caller's Keycloak token at the edge
+# and then forwards that same token to the backend. hovedbok's MCP wants its
+# own MCP_TOKEN, so this nginx — the only thing on the gateway's network —
+# replaces the Authorization header. Registered in the gateway as
+# http://hovedbok-mcp:3001/mcp. Rendered by the nginx image's envsubst from
+# /etc/nginx/templates; ${MCP_TOKEN} comes from the stack's .env.
+server {
+    listen 3001;
+    server_name _;
+
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_http_version 1.1;
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
+    client_max_body_size 64m;
+
+    location / {
+        proxy_pass http://mcp:3001;
+        proxy_set_header Host $host;
+        proxy_set_header Authorization "Bearer ${MCP_TOKEN}";
+        proxy_set_header Connection "";
+        proxy_set_header Accept $http_accept;
+        proxy_set_header Content-Type $http_content_type;
+        proxy_set_header Mcp-Session-Id $http_mcp_session_id;
+        proxy_pass_header Mcp-Session-Id;
+    }
+}
