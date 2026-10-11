@@ -1,0 +1,10 @@
+{
+  "server_name": "hovedbok",
+  "description": "Norwegian accounting ledger: post vouchers, attach documents, match bank movements, reports, MVA-melding and SAF-T. Entity = 9-digit orgnr; 999999999 is the test entity.",
+  "path": "/hovedbok",
+  "proxy_pass_url": "http://hovedbok-mcp:3001/mcp",
+  "auth_scheme": "none",
+  "supported_transports": ["streamable-http"],
+  "tags": ["accounting", "bookkeeping", "ledger"],
+  "num_tools": 36
+}
