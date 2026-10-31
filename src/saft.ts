@@ -360,8 +360,42 @@ export function missingCompanyFields(c: SaftCompany): string[] {
  * journal. Header/Company comes from the entity's company profile (0032),
  * with opts.company overriding it key by key (address, contact, bankAccounts,
  * name); throws, naming the fields, when that leaves the header incomplete.
+ * Every query reads one snapshot (see `snapshot`), whatever handle is given.
  */
-export async function buildSaft(sql: SQL, opts: SaftOptions): Promise<SaftExport> {
+export function buildSaft(sql: SQL, opts: SaftOptions): Promise<SaftExport> {
+  return snapshot(sql, (tx) => build(tx, opts));
+}
+
+/**
+ * Runs fn on one REPEATABLE READ snapshot, so masters, balances, tax table and
+ * journal all describe the same committed books even while vouchers are being
+ * posted (#20). Given a pool or a reserved connection, fn gets its own
+ * read-only transaction. Given a caller's transaction (it has savepoint()),
+ * fn runs in it: raised to repeatable read if it has not read yet, refused if
+ * it already read under read committed (its snapshots move per statement).
+ */
+async function snapshot<T>(sql: SQL, fn: (tx: SQL) => Promise<T>): Promise<T> {
+  if (typeof (sql as { savepoint?: unknown }).savepoint !== "function") {
+    return sql.begin("isolation level repeatable read read only", (tx) => fn(tx as unknown as SQL)) as Promise<T>;
+  }
+  // SHOW takes no snapshot, so a transaction that has not read can still change level
+  const [row] = await sql`show transaction_isolation` as { transaction_isolation: string }[];
+  const level = row?.transaction_isolation;
+  if (level === "read committed" || level === "read uncommitted") {
+    try {
+      await sql`set transaction isolation level repeatable read`;
+    } catch (e) {
+      if ((e as { errno?: string }).errno !== "25001") throw e;
+      throw new Error(
+        "SAF-T export needs one consistent snapshot: the given transaction has already read under " +
+        `${level}; pass the pool, or begin the transaction with isolation level repeatable read`,
+      );
+    }
+  }
+  return fn(sql);
+}
+
+async function build(sql: SQL, opts: SaftOptions): Promise<SaftExport> {
   const { entity, from, to } = opts;
   assertDate(from, "from");
   assertDate(to, "to");
