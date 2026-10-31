@@ -202,7 +202,8 @@ for `MCP_TOKEN`. Copy `deploy/env.example` to `.env` in the deploy checkout
 ```sh
 docker compose up -d --build
 deploy/backup.sh            # pg_dump + the documents volume to ~/backups/hovedbok
-deploy/backup.sh --status   # exits non-zero when the newest dump is stale
+deploy/backup.sh --status   # non-zero unless the newest complete set (dump +
+                            # documents) verifies, is fresh, and the last run succeeded
 ```
 
 Enable Banking stays unset until the owner has registered an application
