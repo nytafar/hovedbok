@@ -11,7 +11,10 @@
 // Operational rules this layer owns (research-enable-banking.md):
 // - PSU headers are all-or-none: an attended read sends every header the
 //   context carries; if Enable Banking refuses them (PSU_HEADER_*) the read is
-//   retried once unattended and the caller is told (`psuRefused`).
+//   retried once unattended and the caller is told (`psuRefused`). Every
+//   request is announced through `onDispatch` before it is sent, so a caller
+//   that budgets unattended reads sees the fallback even when a later request
+//   throws.
 // - 429 surfaces as RateLimitedError with the bank's Retry-After, so the sync
 //   layer can back off (6 h minimum). Nothing here retries a 429.
 // - Pagination follows continuation_key with loop guards (repeated key, page
@@ -178,6 +181,12 @@ export interface ClientOptions {
   now?: () => number;
 }
 
+/**
+ * Called just before a request goes out; `attended` is whether it carries PSU
+ * headers. The quota counts what was sent, not what was asked for.
+ */
+export type DispatchHook = (attended: boolean) => void;
+
 interface RequestOptions {
   query?: Record<string, string | undefined>;
   body?: unknown;
@@ -188,12 +197,18 @@ interface RequestOptions {
    * whether an unattended read is allowed right now.
    */
   psuFallback?: boolean;
+  onDispatch?: DispatchHook;
 }
 
 interface RequestResult<T> {
   data: T;
   /** The PSU headers were sent and refused; the read went out unattended. */
   psuRefused: boolean;
+}
+
+/** Whether `psu` yields any PSU headers at all; without them a read is unattended. */
+export function isAttendedPsu(psu: PsuContext | undefined): psu is PsuContext {
+  return !!psu && Object.keys(psuHeaders(psu)).length > 0;
 }
 
 function psuHeaders(psu: PsuContext): Record<string, string> {
@@ -243,12 +258,14 @@ export class EnableBankingClient {
       if (v !== undefined && v !== "") url.searchParams.set(k, v);
     }
     const psu = opts.psu ? psuHeaders(opts.psu) : {};
+    opts.onDispatch?.(Object.keys(psu).length > 0);
     let res = await this.send(method, url, opts.body, psu);
     let psuRefused = false;
     if (Object.keys(psu).length > 0 && (res.status === 400 || res.status === 422)) {
       const body = await res.clone().json().catch(() => undefined) as { error?: string } | undefined;
       if (typeof body?.error === "string" && body.error.startsWith("PSU_HEADER_") && opts.psuFallback !== false) {
         psuRefused = true;
+        opts.onDispatch?.(false);
         res = await this.send(method, url, opts.body, {});
       }
     }
@@ -330,15 +347,20 @@ export class EnableBankingClient {
 
   // ----- account data (the bank-side reads the quota applies to) -----
 
-  async accountDetails(uid: string, psu?: PsuContext, psuFallback = true): Promise<RequestResult<AccountResource>> {
-    return this.request<AccountResource>("GET", `/accounts/${encodeURIComponent(uid)}/details`, { psu, psuFallback });
+  async accountDetails(
+    uid: string,
+    psu?: PsuContext,
+    psuFallback = true,
+    onDispatch?: DispatchHook,
+  ): Promise<RequestResult<AccountResource>> {
+    return this.request<AccountResource>("GET", `/accounts/${encodeURIComponent(uid)}/details`, { psu, psuFallback, onDispatch });
   }
 
-  async balances(uid: string, psu?: PsuContext, psuFallback = true): Promise<RequestResult<Balance[]>> {
+  async balances(uid: string, psu?: PsuContext, psuFallback = true, onDispatch?: DispatchHook): Promise<RequestResult<Balance[]>> {
     const r = await this.request<{ balances: Balance[] }>(
       "GET",
       `/accounts/${encodeURIComponent(uid)}/balances`,
-      { psu, psuFallback },
+      { psu, psuFallback, onDispatch },
     );
     return { data: r.data.balances ?? [], psuRefused: r.psuRefused };
   }
@@ -348,6 +370,7 @@ export class EnableBankingClient {
     q: { dateFrom?: string; dateTo?: string; continuationKey?: string; strategy?: "default" | "longest" },
     psu?: PsuContext,
     psuFallback = true,
+    onDispatch?: DispatchHook,
   ): Promise<RequestResult<TransactionsPage>> {
     const r = await this.request<TransactionsPage>(
       "GET",
@@ -361,6 +384,7 @@ export class EnableBankingClient {
         },
         psu,
         psuFallback,
+        onDispatch,
       },
     );
     return { data: { ...r.data, transactions: r.data.transactions ?? [] }, psuRefused: r.psuRefused };
@@ -377,7 +401,7 @@ export class EnableBankingClient {
   async transactions(
     uid: string,
     q: { dateFrom?: string; dateTo?: string; strategy?: "default" | "longest" },
-    opts: { psu?: PsuContext; psuFallback?: boolean; onWarning?: (msg: string) => void } = {},
+    opts: { psu?: PsuContext; psuFallback?: boolean; onDispatch?: DispatchHook; onWarning?: (msg: string) => void } = {},
   ): Promise<{ transactions: Transaction[]; pages: number; psuRefused: boolean; truncated: boolean }> {
     const out: Transaction[] = [];
     const seenKeys = new Set<string>();
@@ -393,7 +417,7 @@ export class EnableBankingClient {
         truncated = true;
         break;
       }
-      const r = await this.transactionsPage(uid, { ...q, continuationKey }, psu, opts.psuFallback);
+      const r = await this.transactionsPage(uid, { ...q, continuationKey }, psu, opts.psuFallback, opts.onDispatch);
       pages++;
       if (r.psuRefused) {
         psuRefused = true;

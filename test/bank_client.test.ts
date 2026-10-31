@@ -5,6 +5,7 @@ import { createPublicKey, generateKeyPairSync, verify } from "node:crypto";
 import {
   EnableBankingClient,
   EnableBankingError,
+  isAttendedPsu,
   RateLimitedError,
   SessionExpiredError,
   type Transaction,
@@ -160,6 +161,33 @@ describe("PSU headers", () => {
     expect(res.data).toHaveLength(2);
     expect(r.calls).toHaveLength(2);
     expect("psu-ip-address" in r.calls[1]!.headers).toBe(false);
+  });
+
+  test("onDispatch announces every request as sent, the fallback too, even when it fails (#22)", async () => {
+    const { c, r } = client([
+      {
+        method: "GET",
+        path: (call) => call.path === "/accounts/u1/balances" && "psu-ip-address" in call.headers,
+        reply: { status: 400, body: { message: "PSU headers required", error: "PSU_HEADER_NOT_PROVIDED" } },
+      },
+      { method: "GET", path: "/accounts/u1/balances", reply: { status: 500, body: { message: "upstream", error: "ASPSP_ERROR" } } },
+    ]);
+    const sent: boolean[] = [];
+    const e = await c.balances("u1", psu, true, (a) => sent.push(a)).catch((x) => x);
+    expect(e).toBeInstanceOf(EnableBankingError);
+    expect(sent).toEqual([true, false]);
+    expect(r.calls).toHaveLength(2);
+    // a context without an address is announced as unattended
+    const empty: boolean[] = [];
+    await c.balances("u1", { ipAddress: "" }, true, (a) => empty.push(a)).catch(() => {});
+    expect(empty).toEqual([false]);
+  });
+
+  test("isAttendedPsu: only a context that yields headers is attended", () => {
+    expect(isAttendedPsu(psu)).toBe(true);
+    expect(isAttendedPsu(undefined)).toBe(false);
+    expect(isAttendedPsu({ ipAddress: "" })).toBe(false);
+    expect(isAttendedPsu({ ipAddress: "203.0.113.9\r\nX-Injected: 1" })).toBe(false);
   });
 });
 
