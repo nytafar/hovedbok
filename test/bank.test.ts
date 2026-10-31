@@ -564,3 +564,163 @@ describe("review items", () => {
     expect(Number(acc.connection_id)).toBe(connectionId);
   });
 });
+
+describe("attendance follows what was sent (#22)", () => {
+  const refusedPsu = { status: 400, body: { message: "PSU headers required", error: "PSU_HEADER_NOT_PROVIDED" } };
+  const withPsu = (k: { headers: Record<string, string> }) => "psu-ip-address" in k.headers;
+  const unattendedCalls = (r: Replay) => r.accountCalls().filter((k) => !withPsu(k));
+  const lastFetches = async (n: number) =>
+    ((await app`select attended, outcome from bank_fetch order by id desc limit ${n}`) as Row[])
+      .reverse()
+      .map((l) => `${l.attended ? "A" : "U"}:${l.outcome}`);
+
+  test("a PSU fallback whose balances read then fails is charged; the fifth run defers without an unattended read", async () => {
+    // transactions refuse the headers, the unattended retry succeeds, balances 500
+    const { client: c, r } = client([
+      { method: "GET", path: (k) => TX(k) && withPsu(k), reply: refusedPsu },
+      { method: "GET", path: TX, reply: { body: { transactions: [], continuation_key: null } } },
+      { method: "GET", path: BAL, reply: { status: 500, body: { message: "upstream", error: "ASPSP_ERROR" } } },
+    ]);
+    for (const h of [300, 301, 302, 303]) {
+      const e = await syncConnection(app, c, connectionId, { today, now: at(h), psu }).catch((x) => x);
+      expect(e).toBeInstanceOf(Error);
+      expect(e.message).toMatch(/ASPSP_ERROR/);
+    }
+    expect(await lastFetches(4)).toEqual(["U:error", "U:error", "U:error", "U:error"]);
+    const [f] = await app`select detail from bank_fetch order by id desc limit 1`;
+    expect(f.detail).toMatch(/PSU headers refused; continuing unattended/);
+    expect(unattendedCalls(r)).toHaveLength(8);
+
+    const before = r.calls.length;
+    const fifth = await syncConnection(app, c, connectionId, { today, now: at(304), psu });
+    expect(fifth.outcome).toBe("deferred");
+    expect(fifth.detail).toMatch(/unattended budget/);
+    // only the attended attempt went out; no unattended request
+    expect(r.calls.slice(before).map(withPsu)).toEqual([true]);
+    expect(unattendedCalls(r)).toHaveLength(8);
+    expect(await lastFetches(1)).toEqual(["A:deferred"]);
+  });
+
+  test("a fallback followed by a failing later page is charged unattended", async () => {
+    const { client: c, r } = client([
+      { method: "GET", path: (k) => TX(k) && withPsu(k), reply: refusedPsu },
+      { method: "GET", path: (k) => TX(k) && !k.query.continuation_key, reply: { body: { transactions: [], continuation_key: "p2" } } },
+      { method: "GET", path: (k) => TX(k) && k.query.continuation_key === "p2", reply: { status: 500, body: { message: "upstream", error: "ASPSP_ERROR" } } },
+    ]);
+    const e = await syncConnection(app, c, connectionId, { today, now: at(330), psu }).catch((x) => x);
+    expect(e).toBeInstanceOf(Error);
+    expect(r.calls.map(withPsu)).toEqual([true, false, false]);
+    expect(await lastFetches(1)).toEqual(["U:error"]);
+  });
+
+  test("a PSU context without an address is unattended before the budget: deferred with no request", async () => {
+    // hour 330 above is one unattended run; three more fill the budget
+    const routes = (): Route[] => [
+      { method: "GET", path: TX, reply: { body: { transactions: [], continuation_key: null } } },
+      { method: "GET", path: BAL, reply: { body: { balances: [] } } },
+    ];
+    const fine = client(routes());
+    for (const h of [331, 332, 333]) {
+      expect((await syncConnection(app, fine.client, connectionId, { today, now: at(h) })).outcome).toBe("ok");
+    }
+    const blank = client(routes());
+    const res = await syncConnection(app, blank.client, connectionId, { today, now: at(334), psu: { ipAddress: "" } });
+    expect(res).toMatchObject({ outcome: "deferred", attended: false });
+    expect(res.detail).toMatch(/unattended budget/);
+    expect(res.warnings.join("\n")).toMatch(/no usable Psu-Ip-Address/);
+    expect(blank.r.calls).toHaveLength(0);
+    expect(await lastFetches(1)).toEqual(["U:deferred"]);
+
+    // with budget free the same context runs, logged unattended
+    const later = await syncConnection(app, blank.client, connectionId, { today, now: at(400), psu: { ipAddress: "" } });
+    expect(later).toMatchObject({ outcome: "ok", attended: false });
+    expect(blank.r.calls.length).toBeGreaterThan(0);
+    expect(blank.r.calls.some(withPsu)).toBe(false);
+    expect(await lastFetches(1)).toEqual(["U:ok"]);
+  });
+
+  test("429 on the unattended fallback: charged unattended, 6 h backoff", async () => {
+    const { client: c } = client([
+      { method: "GET", path: (k) => TX(k) && withPsu(k), reply: refusedPsu },
+      { method: "GET", path: TX, reply: { status: 429, body: { message: "limit", error: "ASPSP_RATE_LIMIT_EXCEEDED" } } },
+    ]);
+    const res = await syncConnection(app, c, connectionId, { today, now: at(450), psu });
+    expect(res).toMatchObject({ outcome: "rate_limited", attended: false });
+    expect(res.resumeAt).toEqual(new Date(at(450)().getTime() + BACKOFF_SECONDS * 1000));
+    const [conn] = await app`select backoff_until from bank_connection where id = ${connectionId}`;
+    expect(conn.backoff_until).toEqual(res.resumeAt);
+    expect(await lastFetches(1)).toEqual(["U:rate_limited"]);
+    const idle = client([]);
+    expect((await syncConnection(app, idle.client, connectionId, { today, now: at(455) })).outcome).toBe("deferred");
+    expect(idle.r.calls).toHaveLength(0);
+  });
+
+  const oneBooking = (patch: Record<string, unknown>): Route[] => [
+    {
+      method: "GET",
+      path: TX,
+      reply: { body: { continuation_key: null, transactions: [{
+        entry_reference: `bad-${JSON.stringify(patch).length}`,
+        transaction_amount: { currency: "NOK", amount: "10.00" },
+        credit_debit_indicator: "CRDT",
+        status: "BOOK",
+        booking_date: "2026-10-01",
+        value_date: "2026-10-01",
+        ...patch,
+      }] } },
+    },
+    { method: "GET", path: BAL, reply: { body: { balances: [] } } },
+  ];
+
+  test("a booking the database refuses is still charged with the real error; the fifth run defers", async () => {
+    const { client: c, r } = client(oneBooking({ booking_date: "2026-02-30" }));
+    const booked = (await counts()).booked;
+    for (const h of [900, 901, 902, 903]) {
+      const e = await syncConnection(app, c, connectionId, { today, now: at(h) }).catch((x) => x);
+      expect(e).toBeInstanceOf(Error);
+      expect(e.message).toMatch(/date/i);
+      expect(e.message).not.toMatch(/transaction is aborted/);
+    }
+    expect(await lastFetches(4)).toEqual(["U:error", "U:error", "U:error", "U:error"]);
+    const [f] = await app`select detail from bank_fetch order by id desc limit 1`;
+    expect(f.detail).toMatch(/date/i);
+    expect(r.calls).toHaveLength(8);
+    for (const h of [904, 905]) {
+      const res = await syncConnection(app, c, connectionId, { today, now: at(h) });
+      expect(res.outcome).toBe("deferred");
+    }
+    expect(r.calls).toHaveLength(8);
+    expect((await counts()).booked).toBe(booked);
+  });
+
+  test("a NUL in the payload is charged too, with the attendance that was sent", async () => {
+    const { client: c, r } = client(oneBooking({ remittance_information: ["Kaffe\u0000"] }));
+    const e = await syncConnection(app, c, connectionId, { today, now: at(1000), psu }).catch((x) => x);
+    expect(e).toBeInstanceOf(Error);
+    expect(e.message).not.toMatch(/transaction is aborted/);
+    expect(r.calls.map(withPsu)).toEqual([true, true]);
+    expect(await lastFetches(1)).toEqual(["A:error"]);
+  });
+
+  test("a run whose transaction fails after reaching the bank is charged after the rollback", async () => {
+    // the run itself succeeds and logs ok; the transaction then fails, taking that row with it
+    const failing = new Proxy(app, {
+      get(target, prop, receiver) {
+        if (prop !== "begin") return Reflect.get(target, prop, receiver);
+        return (fn: (t: unknown) => Promise<unknown>) =>
+          target.begin(async (t) => {
+            await fn(t);
+            throw new Error("commit failed");
+          });
+      },
+    });
+    const { client: c, r } = client(oneBooking({}));
+    const fetches = (await counts()).fetches;
+    const e = await syncConnection(failing, c, connectionId, { today, now: at(1030) }).catch((x) => x);
+    expect(e.message).toBe("commit failed");
+    expect(r.calls).toHaveLength(2);
+    expect((await counts()).fetches).toBe(fetches + 1);
+    const [f] = await app`select attended, outcome, detail from bank_fetch order by id desc limit 1`;
+    expect(f).toMatchObject({ attended: false, outcome: "error", detail: "commit failed" });
+  });
+});

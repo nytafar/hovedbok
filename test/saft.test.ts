@@ -347,3 +347,123 @@ describe("v1.40 switch: foreign currency, NOK tax amounts, owners", () => {
     expect(normalise(ledger(golden.xml))).toBe(normalise(ledger(reference)));
   });
 });
+
+describe("no posted accounts (#21)", () => {
+  const FRESH = "999999999";
+
+  beforeAll(async () => {
+    await sql`select bootstrap_entity(${{ orgnr: FRESH, name: "Ny AS", year: 2026 }}::jsonb)`;
+    const { name: _, bankAccounts: __, ...profile } = company();
+    await sql`select set_company_profile(${{ entity: FRESH, company_profile: profile }}::jsonb)`;
+  });
+
+  // GeneralLedgerAccounts needs at least one Account when present, so with
+  // nothing posted on or before `to` it is left out (both XSDs make it optional)
+  for (const version of ["1.30", "1.40"] as const) {
+    withXmllint(`v${version}: a fresh entity exports a valid file without GeneralLedgerAccounts`, async () => {
+      const out = await buildSaft(sql, { entity: FRESH, from: "2026-01-01", to: "2026-12-31", now: NOW, version });
+      expect(out.entries).toBe(0);
+      expect(out.xml).not.toContain("GeneralLedgerAccounts");
+      expect(out.xml).toContain("<NumberOfEntries>0</NumberOfEntries>");
+      await validate(out.xml, version);
+    });
+
+    withXmllint(`v${version}: a range before the first posting exports a valid file without GeneralLedgerAccounts`, async () => {
+      const out = await buildSaft(sql, { entity: E, from: "2025-01-01", to: "2025-12-31", now: NOW, company: company(), version });
+      expect(out.entries).toBe(0);
+      expect(out.xml).not.toContain("GeneralLedgerAccounts");
+      // the party masters are period-independent and stay
+      expect(out.xml).toContain("<Customers>");
+      await validate(out.xml, version);
+    });
+  }
+});
+
+/**
+ * `sql`, but `before` runs (once, to completion) ahead of the first query
+ * whose text contains `marker`, on whatever handle the exporter queries
+ * through: the pool itself, or a transaction it begins on it.
+ */
+function interceptBefore(sql: SQL, marker: string, before: () => Promise<unknown>): SQL & { fired: boolean } {
+  const state = { fired: false };
+  const wrap = (target: SQL): SQL => new Proxy(target, {
+    apply(t, self, args) {
+      const [strings] = args as [unknown];
+      if (!state.fired && Array.isArray(strings) && strings.join("$").includes(marker)) {
+        state.fired = true;
+        return before().then(() => Reflect.apply(t, self, args));
+      }
+      return Reflect.apply(t, self, args);
+    },
+    get(t, p) {
+      if (p === "fired") return state.fired;
+      const v = Reflect.get(t, p) as unknown;
+      if (p === "begin" && typeof v === "function") {
+        return (...a: unknown[]) => {
+          const fn = a.pop() as (tx: SQL) => Promise<unknown>;
+          return (v as (...b: unknown[]) => unknown).call(t, ...a, (tx: SQL) => fn(wrap(tx)));
+        };
+      }
+      return typeof v === "function" ? v.bind(t) : v;
+    },
+  });
+  return wrap(sql) as SQL & { fired: boolean };
+}
+
+describe("one consistent snapshot per export (#20)", () => {
+  const OCT = { from: "2026-10-01", to: "2026-10-31" };
+  // the final read: the journal lines of the period
+  const LINES = "order by j.year, j.nr, j.line";
+  let n = 0;
+
+  /** Commits a voucher on the until-now unused account 7790 from another connection. */
+  const postConcurrently = () => sql`select post_voucher(${{
+    entity: E, posting_date: "2026-10-15", description: "Samtidig bilag", idempotency_key: `oct:${++n}`,
+    lines: [{ account: "7790", amount: 12345 }, { account: "1920", amount: -12345 }],
+  }}::jsonb)`;
+
+  beforeAll(async () => {
+    await sql`select upsert_account(${{ entity: E, code: "7790", name: "Annen kostnad", grouping: "7700" }}::jsonb)`;
+  });
+
+  // The export taken while the voucher commits must equal the one taken
+  // before it (absent throughout); the next export has it throughout.
+  const scenario = async (run: (s: SQL & { fired: boolean }) => Promise<string>) => {
+    const opts = { entity: E, ...OCT, now: NOW, company: company() };
+    const before = await buildSaft(sql, opts);
+    const s = interceptBefore(sql, LINES, postConcurrently);
+    const during = await run(s);
+    expect(s.fired).toBe(true);
+    expect(during).toBe(before.xml);
+    const after = await buildSaft(sql, opts);
+    expect(after.entries).toBe(before.entries + 1);
+    expect(after.xml).toContain("<AccountID>7790</AccountID>\n        <AccountDescription>Annen kostnad</AccountDescription>");
+    expect(after.xml).toContain("<RecordID>1</RecordID>\n          <AccountID>7790</AccountID>");
+    if (XMLLINT) await validate(after.xml, "1.30");
+  };
+
+  test("handed a pool, the export reads one snapshot", async () => {
+    await scenario(async (s) => (await buildSaft(s, { entity: E, ...OCT, now: NOW, company: company() })).xml);
+  });
+
+  test("handed a caller's transaction that has not read yet, the export takes its snapshot there", async () => {
+    await scenario((s) => asRo(s, async (tx) => (await buildSaft(tx, { entity: E, ...OCT, now: NOW, company: company() })).xml));
+  });
+
+  test("handed a read-committed transaction that has already read: refused, saying why", async () => {
+    await expect(sql.begin(async (tx) => {
+      await tx`select 1`;
+      return buildSaft(tx as unknown as SQL, { entity: E, ...OCT, now: NOW, company: company() });
+    })).rejects.toThrow("SAF-T export needs one consistent snapshot: the given read committed transaction has already read, or is a savepoint");
+    // a read-committed savepoint cannot change level either (Postgres: same SQLSTATE), even before any read
+    await expect(sql.begin((tx) => tx.savepoint((sp) =>
+      buildSaft(sp as unknown as SQL, { entity: E, ...OCT, now: NOW, company: company() }))))
+      .rejects.toThrow("has already read, or is a savepoint, so it cannot switch to repeatable read");
+    // a repeatable-read transaction already has one
+    const out = await sql.begin("isolation level repeatable read", async (tx) => {
+      await tx`select 1`;
+      return buildSaft(tx as unknown as SQL, { entity: E, ...OCT, now: NOW, company: company() });
+    });
+    expect(out.xml).toContain("<AccountID>7790</AccountID>");
+  });
+});

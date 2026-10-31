@@ -16,6 +16,11 @@
 //   unattended runs before that are deferred without touching the bank. An
 //   attended run whose PSU headers the API refuses falls back to an
 //   unattended read only when the budget and backoff allow it.
+// - Attendance is what was sent, not what was asked for: a run is logged
+//   unattended as soon as one request went out without PSU headers (a
+//   fallback, or a PSU context with no usable address), whatever the run's
+//   outcome. A PSU context that yields no headers is classified unattended
+//   before the budget is consulted.
 // - BOOK transactions become bank_transaction rows keyed by entry_reference,
 //   else 'fp:' + a content fingerprint, with an occurrence number when the
 //   same fingerprint appears more than once in the window (two identical
@@ -31,8 +36,10 @@ import type { SQL } from "bun";
 import {
   type AccountResource,
   type Balance,
+  type DispatchHook,
   EnableBankingClient,
   EnableBankingError,
+  isAttendedPsu,
   type PsuContext,
   RateLimitedError,
   SessionExpiredError,
@@ -356,7 +363,10 @@ export class ConsentEntityError extends Error {
 // ----- sync -----
 
 export interface SyncOptions {
-  /** Present when a human triggered the run: sends PSU headers, skips the unattended budget. */
+  /**
+   * Present when a human triggered the run: sends PSU headers, skips the
+   * unattended budget. Without a usable ipAddress the run is unattended.
+   */
   psu?: PsuContext;
   /** Ask for the longest history the bank allows (post-consent). */
   backfill?: boolean;
@@ -392,7 +402,8 @@ async function logFetch(
   detail: string,
   warnings: string[] = [],
 ): Promise<void> {
-  const text = [detail, ...warnings].filter(Boolean).join("\n");
+  // bank text (error messages, cursors) ends up here; Postgres text refuses NUL
+  const text = [detail, ...warnings].filter(Boolean).join("\n").replaceAll("\u0000", "�");
   await sql`
     insert into bank_fetch (connection_id, started_at, attended, outcome, detail)
     values (${connectionId}, ${at}, ${attended}, ${outcome}, ${text || null})`;
@@ -431,6 +442,11 @@ async function unattendedWindow(
  * One fetch of every account on a consent, inside one transaction that holds
  * the bank_connection row. Never throws on 429, refused PSU headers or an
  * expired session; any other failure is logged (it still counts) and rethrown.
+ * Each account's reads and writes run in a savepoint, so a statement the
+ * database refuses (a bad date, a NUL in the payload) undoes that account only
+ * and the charge is still recorded; earlier accounts keep their facts, as on a
+ * bank error. Should the transaction fail anyway after a request went out,
+ * the charge is written on its own after the rollback.
  */
 export async function syncConnection(
   sql: SQL,
@@ -445,10 +461,15 @@ export async function syncConnection(
     warnings.push(m);
     o.onWarning?.(m);
   };
-  const attendedWanted = !!o.psu;
+  // A context without a usable address sends no headers: unattended, budgeted.
+  const psu = isAttendedPsu(o.psu) ? o.psu : undefined;
+  if (o.psu && !psu) warn("PSU context has no usable Psu-Ip-Address; running unattended");
+  const attendedWanted = !!psu;
   const base = { connectionId, attended: attendedWanted, accounts: [] as AccountSyncResult[], warnings };
 
   let failure: unknown;
+  // The latest dispatch: once set, this run reached the bank and must be charged.
+  let reached: { at: Date; attended: boolean } | undefined;
   const result = (await sql.begin(async (t) => {
     const tx = t as unknown as SQL;
     const [conn] = await tx`
@@ -469,7 +490,7 @@ export async function syncConnection(
       ? ({ allowed: true } as const)
       : await unattendedWindow(tx, connectionId, conn.backoff_until ? new Date(conn.backoff_until) : null, t0);
     if (!attendedWanted && !window.allowed) {
-      await logFetch(tx, connectionId, t0, false, "deferred", window.reason);
+      await logFetch(tx, connectionId, t0, false, "deferred", window.reason, warnings);
       return { ...base, outcome: "deferred", resumeAt: window.resumeAt, detail: window.reason };
     }
 
@@ -486,23 +507,31 @@ export async function syncConnection(
         : addDays(dateTo, -FALLBACK_HISTORY_DAYS);
     }
 
+    // Set by the client before each request goes out, so a fallback is seen
+    // even when a later page or the balances read throws.
     let attended = attendedWanted;
+    let current = "";
+    const onDispatch: DispatchHook = (sent) => {
+      if (!sent && attended) {
+        attended = false;
+        warn(`account ${current}: PSU headers refused; continuing unattended`);
+      }
+      reached = { at: t0, attended };
+    };
     const results: AccountSyncResult[] = [];
     try {
       for (const acc of accounts) {
-        const r = await syncAccount(tx, client, acc, {
-          psu: attended ? o.psu : undefined,
+        current = acc.id_hash;
+        const r = await t.savepoint((sp) => syncAccount(sp, client, acc, {
+          psu: attended ? psu : undefined,
           // falling back to an unattended read is itself an unattended fetch
           psuFallback: window.allowed,
           backfill: !!o.backfill,
           dateFrom,
           dateTo,
+          onDispatch,
           onWarning: warn,
-        });
-        if (r.psuRefused) {
-          attended = false;
-          warn(`account ${acc.id_hash}: PSU headers refused; continuing unattended`);
-        }
+        }));
         results.push(r.result);
       }
     } catch (e) {
@@ -518,7 +547,7 @@ export async function syncConnection(
         await logFetch(tx, connectionId, t0, attended, "expired", e.message, warnings);
         return { ...base, attended, accounts: results, outcome: "expired", detail: e.message };
       }
-      if (e instanceof EnableBankingError && e.code?.startsWith("PSU_HEADER_") && !window.allowed) {
+      if (e instanceof EnableBankingError && e.code?.startsWith("PSU_HEADER_") && !window.allowed && attended) {
         // Enable Banking refused the attended read and the unattended budget
         // or backoff forbids the fallback. Nothing reached the bank.
         const reason = `PSU headers refused (${e.code}) and ${window.reason}`;
@@ -547,6 +576,15 @@ export async function syncConnection(
       .join("\n");
     await logFetch(tx, connectionId, t0, attended, "ok", detail || "no accounts", warnings);
     return { ...base, attended, accounts: results, outcome: "ok" };
+  }).catch(async (e) => {
+    // Rolled back, the bank_fetch row with it. A request that went out still counts.
+    if (reached) {
+      const message = e instanceof Error ? e.message : String(e);
+      await logFetch(sql, connectionId, reached.at, reached.attended, "error", message, warnings).catch((le) =>
+        o.onWarning?.(`bank_fetch for connection ${connectionId} not recorded: ${le instanceof Error ? le.message : le}`),
+      );
+    }
+    throw e;
   })) as SyncResult | undefined;
   if (failure !== undefined) throw failure;
   return result as SyncResult;
@@ -555,6 +593,7 @@ export async function syncConnection(
 interface AccountSyncOptions {
   psu?: PsuContext;
   psuFallback: boolean;
+  onDispatch?: DispatchHook;
   backfill: boolean;
   dateFrom?: string;
   dateTo: string;
@@ -573,26 +612,29 @@ export async function syncAccount(
   let psuRefused = false;
   let psu = o.psu;
   let dateFrom = o.dateFrom;
-  const copts = { psu, psuFallback: o.psuFallback, onWarning: o.onWarning };
+  // Once a request went out without the headers, the rest of the account does too.
+  const onDispatch: DispatchHook = (sent) => {
+    if (!sent && psu) {
+      psuRefused = true;
+      psu = undefined;
+    }
+    o.onDispatch?.(sent);
+  };
+  const copts = () => ({ psu, psuFallback: o.psuFallback, onDispatch, onWarning: o.onWarning });
   let fetched;
   if (o.backfill) {
     try {
-      fetched = await client.transactions(acc.uid, { strategy: "longest" }, copts);
+      fetched = await client.transactions(acc.uid, { strategy: "longest" }, copts());
     } catch (e) {
       if (!(e instanceof EnableBankingError) || e.code !== "WRONG_TRANSACTIONS_PERIOD") throw e;
       dateFrom = addDays(o.dateTo, -FALLBACK_HISTORY_DAYS);
       o.onWarning(`account ${acc.id_hash}: bank refused the longest history; fetching ${dateFrom}..${o.dateTo}`);
-      fetched = await client.transactions(acc.uid, { dateFrom, dateTo: o.dateTo }, copts);
+      fetched = await client.transactions(acc.uid, { dateFrom, dateTo: o.dateTo }, copts());
     }
   } else {
-    fetched = await client.transactions(acc.uid, { dateFrom, dateTo: o.dateTo }, copts);
+    fetched = await client.transactions(acc.uid, { dateFrom, dateTo: o.dateTo }, copts());
   }
-  if (fetched.psuRefused) {
-    psuRefused = true;
-    psu = undefined;
-  }
-  const balances = await client.balances(acc.uid, psu, o.psuFallback);
-  if (balances.psuRefused) psuRefused = true;
+  const balances = await client.balances(acc.uid, psu, o.psuFallback, onDispatch);
 
   const result = await storeAccount(tx, acc.id_hash, fetched.transactions, balances.data, o.onWarning);
   return {

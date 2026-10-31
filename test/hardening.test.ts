@@ -49,6 +49,27 @@ async function waitUntilBlocked(pid: number): Promise<void> {
   throw new Error(`backend ${pid} never blocked on a lock`);
 }
 
+/** Resolves once `pid` has finished its statement. */
+async function waitUntilIdle(pid: number): Promise<void> {
+  for (let i = 0; i < 200; i++) {
+    const [r] = await sql`select state from pg_stat_activity where pid = ${pid}`;
+    if (r?.state === "idle") return;
+    await Bun.sleep(10);
+  }
+  throw new Error(`backend ${pid} never went idle`);
+}
+
+/**
+ * A statement left running while the test awaits something else. Marked
+ * handled at once: if it fails before the test gets round to awaiting it, an
+ * unhandled rejection would fail the test there and then and abandon its body
+ * mid-flight (#16). Awaiting the returned promise still throws.
+ */
+function inFlight<T>(p: Promise<T>): Promise<T> {
+  p.catch(() => {});
+  return p;
+}
+
 const sale: Line[] = [
   { account: "1920", amount: 12500 },
   { account: "3000", amount: -10000, vat_code: "3", vat_base: -10000 },
@@ -393,16 +414,23 @@ describe("close_period serialises with in-flight postings", () => {
   test("a posting that waited on an in-flight close sees the period closed", async () => {
     const a = await sql.reserve();
     const b = await sql.reserve();
+    let posting: Promise<unknown> | undefined;
     try {
       const [{ pid }] = await a`select pg_backend_pid() as pid`;
       await b`begin`;
       await b`select close_period(${E}, ${Y}::smallint, 1::smallint)`;
-      const posting = post(a, voucher("late", sale));
+      posting = inFlight(post(a, voucher("late", sale)));
       await waitUntilBlocked(pid);
       await b`commit`;
+      // The posting fails as soon as the close commits, which may be before
+      // we await it; wait until it has, so that window is always exercised.
+      await waitUntilIdle(pid);
       const err = await pgError(posting);
       expect(err.message).toContain("closed");
     } finally {
+      // Even on failure: end the close, let the posting settle, then hand back.
+      await b`rollback`.catch(() => {});
+      await posting?.catch(() => {});
       a.release();
       b.release();
     }
@@ -413,16 +441,19 @@ describe("close_period serialises with in-flight postings", () => {
   test("a close that waited on an in-flight posting closes after it", async () => {
     const a = await sql.reserve();
     const b = await sql.reserve();
+    let closing: Promise<unknown> | undefined;
     try {
       const [{ pid }] = await b`select pg_backend_pid() as pid`;
       await a`begin`;
       await post(a, voucher("early", sale));
       // .execute(): a bare tagged template is lazy and would only run when awaited
-      const closing = b`select close_period(${E}, ${Y}::smallint, 1::smallint)`.execute();
+      closing = inFlight(b`select close_period(${E}, ${Y}::smallint, 1::smallint)`.execute());
       await waitUntilBlocked(pid);
       await a`commit`;
       await closing;
     } finally {
+      await a`rollback`.catch(() => {});
+      await closing?.catch(() => {});
       a.release();
       b.release();
     }
