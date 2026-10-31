@@ -402,7 +402,8 @@ async function logFetch(
   detail: string,
   warnings: string[] = [],
 ): Promise<void> {
-  const text = [detail, ...warnings].filter(Boolean).join("\n");
+  // bank text (error messages, cursors) ends up here; Postgres text refuses NUL
+  const text = [detail, ...warnings].filter(Boolean).join("\n").replaceAll("\u0000", "�");
   await sql`
     insert into bank_fetch (connection_id, started_at, attended, outcome, detail)
     values (${connectionId}, ${at}, ${attended}, ${outcome}, ${text || null})`;
@@ -441,6 +442,11 @@ async function unattendedWindow(
  * One fetch of every account on a consent, inside one transaction that holds
  * the bank_connection row. Never throws on 429, refused PSU headers or an
  * expired session; any other failure is logged (it still counts) and rethrown.
+ * Each account's reads and writes run in a savepoint, so a statement the
+ * database refuses (a bad date, a NUL in the payload) undoes that account only
+ * and the charge is still recorded; earlier accounts keep their facts, as on a
+ * bank error. Should the transaction fail anyway after a request went out,
+ * the charge is written on its own after the rollback.
  */
 export async function syncConnection(
   sql: SQL,
@@ -462,6 +468,8 @@ export async function syncConnection(
   const base = { connectionId, attended: attendedWanted, accounts: [] as AccountSyncResult[], warnings };
 
   let failure: unknown;
+  // The latest dispatch: once set, this run reached the bank and must be charged.
+  let reached: { at: Date; attended: boolean } | undefined;
   const result = (await sql.begin(async (t) => {
     const tx = t as unknown as SQL;
     const [conn] = await tx`
@@ -504,15 +512,17 @@ export async function syncConnection(
     let attended = attendedWanted;
     let current = "";
     const onDispatch: DispatchHook = (sent) => {
-      if (sent || !attended) return;
-      attended = false;
-      warn(`account ${current}: PSU headers refused; continuing unattended`);
+      if (!sent && attended) {
+        attended = false;
+        warn(`account ${current}: PSU headers refused; continuing unattended`);
+      }
+      reached = { at: t0, attended };
     };
     const results: AccountSyncResult[] = [];
     try {
       for (const acc of accounts) {
         current = acc.id_hash;
-        const r = await syncAccount(tx, client, acc, {
+        const r = await t.savepoint((sp) => syncAccount(sp, client, acc, {
           psu: attended ? psu : undefined,
           // falling back to an unattended read is itself an unattended fetch
           psuFallback: window.allowed,
@@ -521,7 +531,7 @@ export async function syncConnection(
           dateTo,
           onDispatch,
           onWarning: warn,
-        });
+        }));
         results.push(r.result);
       }
     } catch (e) {
@@ -566,6 +576,15 @@ export async function syncConnection(
       .join("\n");
     await logFetch(tx, connectionId, t0, attended, "ok", detail || "no accounts", warnings);
     return { ...base, attended, accounts: results, outcome: "ok" };
+  }).catch(async (e) => {
+    // Rolled back, the bank_fetch row with it. A request that went out still counts.
+    if (reached) {
+      const message = e instanceof Error ? e.message : String(e);
+      await logFetch(sql, connectionId, reached.at, reached.attended, "error", message, warnings).catch((le) =>
+        o.onWarning?.(`bank_fetch for connection ${connectionId} not recorded: ${le instanceof Error ? le.message : le}`),
+      );
+    }
+    throw e;
   })) as SyncResult | undefined;
   if (failure !== undefined) throw failure;
   return result as SyncResult;
