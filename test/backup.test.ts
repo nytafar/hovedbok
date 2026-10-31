@@ -379,6 +379,30 @@ describe("an interrupted run never leaves status green", () => {
     expect(status().code).toBe(0);
   });
 
+  test("a marker whose pid now belongs to another process is not a live run", async () => {
+    expect(backup([], { stamp: "20261014-020000" }).code).toBe(0);
+    const bootId = (await readFile("/proc/sys/kernel/random/boot_id", "utf8")).trim();
+    // Live pids, but not the run that wrote the marker: pid 1 as a bare pid,
+    // this test process with a start time it does not have, and this process
+    // with its own start time but another boot.
+    const stat = await readFile(`/proc/${process.pid}/stat`, "utf8");
+    const start = stat.slice(stat.lastIndexOf(") ") + 2).split(" ")[19];
+    const markers: Record<string, string> = {
+      "hovedbok-20261015-010000": "1\n",
+      "hovedbok-20261015-020000": `${process.pid} ${Number(start) + 1} ${bootId}\n`,
+      "hovedbok-20261015-030000": `${process.pid} ${start} 00000000-0000-0000-0000-000000000000\n`,
+    };
+    for (const [b, body] of Object.entries(markers)) await writeFile(join(dest, "daily", `RUNNING.${b}`), body);
+    const s = status();
+    for (const b of Object.keys(markers)) expect(s.out).toContain(`INTERRUPTED: ${b}`);
+    expect(s.out).not.toContain("RUNNING:");
+    expect(s.code).not.toBe(0);
+
+    expect(backup([], { stamp: "20261016-020000" }).code).toBe(0);
+    expect((await ls("daily")).filter((f) => f.startsWith("RUNNING."))).toEqual([]);
+    expect(status().code).toBe(0);
+  });
+
   test("a run refused before any work (its set already exists) still records failure", async () => {
     expect(backup([]).code).toBe(0);
     const r = backup([]);

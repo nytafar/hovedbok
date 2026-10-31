@@ -21,8 +21,9 @@
 #     never pushes a good set out, and leaves a FAILED marker in its directory
 #     (cleared by the next good run of the same kind). TERM/INT/HUP count as
 #     failure. A run killed outright (no trap runs) is caught by its
-#     RUNNING.<base> marker, written at start with the run's pid and removed
-#     when it ends: --status fails on one whose pid is gone, and shows a live
+#     RUNNING.<base> marker, written at start with the run's pid, its start
+#     time and the boot id, and removed when it ends: --status fails on one
+#     whose process is gone (a reused pid does not match), and shows a live
 #     one as running.
 #   - Retention: DAILY_KEEP complete dailies; the set taken on the 1st is also
 #     kept as a monthly, MONTHLY_KEEP of them. Only complete sets count;
@@ -114,8 +115,26 @@ running_markers() { # dir — RUNNING.<base> markers of runs that have not ended
   find "$1" -maxdepth 1 -type f -name 'RUNNING.hovedbok-*' | sort
 }
 
-alive() { # pid
-  [[ "$1" =~ ^[0-9]+$ ]] && { kill -0 "$1" 2>/dev/null || [ -d "/proc/$1" ]; }
+# A run is identified by its pid, the pid's start time (field 22 of
+# /proc/<pid>/stat, clock ticks since boot) and the boot id: a pid reused by
+# another process, or after a reboot, is not the run.
+run_id() { # pid — "pid starttime bootid", empty if no such process
+  local stat f
+  stat="$(cat "/proc/$1/stat" 2>/dev/null)" || return 0
+  read -ra f <<< "${stat##*) }" # fields from 3 on; comm may hold spaces
+  echo "$1 ${f[19]} $(cat /proc/sys/kernel/random/boot_id)"
+}
+
+alive() { # marker
+  local pid
+  read -r pid _ < "$1" || true
+  [[ "${pid:-}" =~ ^[0-9]+$ ]] && [ "$(run_id "$pid")" = "$(cat "$1")" ]
+}
+
+marker_pid() { # marker
+  local pid
+  read -r pid _ < "$1" || true
+  echo "${pid:-?}"
 }
 
 status() {
@@ -132,10 +151,10 @@ status() {
       echo "FAILED: last $d run: $(cat "$DEST/$d/FAILED")"; rc=1
     fi
     while read -r m; do
-      if alive "$(cat "$m")"; then
-        echo "RUNNING: ${m##*/RUNNING.} (pid $(cat "$m"))"
+      if alive "$m"; then
+        echo "RUNNING: ${m##*/RUNNING.} (pid $(marker_pid "$m"))"
       else
-        echo "INTERRUPTED: ${m##*/RUNNING.} died without finishing (pid $(cat "$m") is gone)"; rc=1
+        echo "INTERRUPTED: ${m##*/RUNNING.} died without finishing (pid $(marker_pid "$m") is gone)"; rc=1
       fi
     done < <(running_markers "$DEST/$d")
   done
@@ -210,7 +229,7 @@ finish() {
     rm -f "$out/FAILED"
     # Runs killed before this one are superseded by it, as FAILED is.
     running_markers "$out" | while read -r m; do
-      [ "$m" = "$out/RUNNING.$base" ] || alive "$(cat "$m")" || rm -f "$m"
+      [ "$m" = "$out/RUNNING.$base" ] || alive "$m" || rm -f "$m"
     done
   else
     [ -n "$complete" ] || rm -f ${published[@]+"${published[@]}"}
@@ -228,7 +247,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 mkdir -p "$out"
-echo "$$" > "$out/RUNNING.$base"
+run_id "$$" > "$out/RUNNING.$base"
 if [ -e "$out/$base.sha256" ]; then
   echo "$out/$base.sha256 already exists" >&2; exit 1
 fi
