@@ -247,7 +247,10 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 mkdir -p "$out"
-run_id "$$" > "$out/RUNNING.$base"
+# Renamed into place, so a concurrent run never reads it half-written as dead.
+temps+=("$out/.RUNNING.$base.partial")
+run_id "$$" > "$out/.RUNNING.$base.partial"
+mv "$out/.RUNNING.$base.partial" "$out/RUNNING.$base"
 if [ -e "$out/$base.sha256" ]; then
   echo "$out/$base.sha256 already exists" >&2; exit 1
 fi
