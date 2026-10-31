@@ -454,7 +454,11 @@ describe("one consistent snapshot per export (#20)", () => {
     await expect(sql.begin(async (tx) => {
       await tx`select 1`;
       return buildSaft(tx as unknown as SQL, { entity: E, ...OCT, now: NOW, company: company() });
-    })).rejects.toThrow("SAF-T export needs one consistent snapshot");
+    })).rejects.toThrow("SAF-T export needs one consistent snapshot: the given read committed transaction has already read, or is a savepoint");
+    // a read-committed savepoint cannot change level either (Postgres: same SQLSTATE), even before any read
+    await expect(sql.begin((tx) => tx.savepoint((sp) =>
+      buildSaft(sp as unknown as SQL, { entity: E, ...OCT, now: NOW, company: company() }))))
+      .rejects.toThrow("has already read, or is a savepoint, so it cannot switch to repeatable read");
     // a repeatable-read transaction already has one
     const out = await sql.begin("isolation level repeatable read", async (tx) => {
       await tx`select 1`;

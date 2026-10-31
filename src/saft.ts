@@ -372,7 +372,9 @@ export function buildSaft(sql: SQL, opts: SaftOptions): Promise<SaftExport> {
  * posted (#20). Given a pool or a reserved connection, fn gets its own
  * read-only transaction. Given a caller's transaction (it has savepoint()),
  * fn runs in it: raised to repeatable read if it has not read yet, refused if
- * it already read under read committed (its snapshots move per statement).
+ * it already read under read committed (its snapshots move per statement) or
+ * is a savepoint (Postgres refuses the level change in a subtransaction, with
+ * the same SQLSTATE).
  */
 async function snapshot<T>(sql: SQL, fn: (tx: SQL) => Promise<T>): Promise<T> {
   if (typeof (sql as { savepoint?: unknown }).savepoint !== "function") {
@@ -387,8 +389,9 @@ async function snapshot<T>(sql: SQL, fn: (tx: SQL) => Promise<T>): Promise<T> {
     } catch (e) {
       if ((e as { errno?: string }).errno !== "25001") throw e;
       throw new Error(
-        "SAF-T export needs one consistent snapshot: the given transaction has already read under " +
-        `${level}; pass the pool, or begin the transaction with isolation level repeatable read`,
+        `SAF-T export needs one consistent snapshot: the given ${level} transaction has already read, ` +
+        "or is a savepoint, so it cannot switch to repeatable read; pass the pool, or begin the " +
+        "transaction with isolation level repeatable read",
       );
     }
   }
