@@ -347,3 +347,34 @@ describe("v1.40 switch: foreign currency, NOK tax amounts, owners", () => {
     expect(normalise(ledger(golden.xml))).toBe(normalise(ledger(reference)));
   });
 });
+
+describe("no posted accounts (#21)", () => {
+  const FRESH = "999999999";
+
+  beforeAll(async () => {
+    await sql`select bootstrap_entity(${{ orgnr: FRESH, name: "Ny AS", year: 2026 }}::jsonb)`;
+    const { name: _, bankAccounts: __, ...profile } = company();
+    await sql`select set_company_profile(${{ entity: FRESH, company_profile: profile }}::jsonb)`;
+  });
+
+  // GeneralLedgerAccounts needs at least one Account when present, so with
+  // nothing posted on or before `to` it is left out (both XSDs make it optional)
+  for (const version of ["1.30", "1.40"] as const) {
+    withXmllint(`v${version}: a fresh entity exports a valid file without GeneralLedgerAccounts`, async () => {
+      const out = await buildSaft(sql, { entity: FRESH, from: "2026-01-01", to: "2026-12-31", now: NOW, version });
+      expect(out.entries).toBe(0);
+      expect(out.xml).not.toContain("GeneralLedgerAccounts");
+      expect(out.xml).toContain("<NumberOfEntries>0</NumberOfEntries>");
+      await validate(out.xml, version);
+    });
+
+    withXmllint(`v${version}: a range before the first posting exports a valid file without GeneralLedgerAccounts`, async () => {
+      const out = await buildSaft(sql, { entity: E, from: "2025-01-01", to: "2025-12-31", now: NOW, company: company(), version });
+      expect(out.entries).toBe(0);
+      expect(out.xml).not.toContain("GeneralLedgerAccounts");
+      // the party masters are period-independent and stay
+      expect(out.xml).toContain("<Customers>");
+      await validate(out.xml, version);
+    });
+  }
+});

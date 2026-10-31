@@ -526,8 +526,11 @@ export async function buildSaft(sql: SQL, opts: SaftOptions): Promise<SaftExport
   x.close("Header");
 
   // MasterFiles
+  // GeneralLedgerAccounts is optional but needs an Account when present: with
+  // nothing posted on or before `to` (fresh books, a range before the first
+  // voucher) it is left out, not emitted empty (#21)
   x.open("MasterFiles");
-  x.open("GeneralLedgerAccounts");
+  if (accounts.length) x.open("GeneralLedgerAccounts");
   for (const a of accounts) {
     if (a.category === null || a.grouping === null) {
       throw new Error(`account ${a.code} has no SAF-T grouping (upsert_account sets std_account or grouping)`);
@@ -542,7 +545,7 @@ export async function buildSaft(sql: SQL, opts: SaftOptions): Promise<SaftExport
     balance(x, f, "Closing", ore(a.closing));
     x.close("Account");
   }
-  x.close("GeneralLedgerAccounts");
+  if (accounts.length) x.close("GeneralLedgerAccounts");
 
   const partyAddress = (p: PartyRow): SaftAddress => ({
     street: str(p.address.street), number: str(p.address.number), city: str(p.address.city),
