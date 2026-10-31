@@ -19,7 +19,11 @@
 #     a set is COMPLETE only when its manifest is there and names a dump and
 #     an archive per volume that all exist. A failed run publishes nothing,
 #     never pushes a good set out, and leaves a FAILED marker in its directory
-#     (cleared by the next good run of the same kind).
+#     (cleared by the next good run of the same kind). TERM/INT/HUP count as
+#     failure. A run killed outright (no trap runs) is caught by its
+#     RUNNING.<base> marker, written at start with the run's pid and removed
+#     when it ends: --status fails on one whose pid is gone, and shows a live
+#     one as running.
 #   - Retention: DAILY_KEEP complete dailies; the set taken on the 1st is also
 #     kept as a monthly, MONTHLY_KEEP of them. Only complete sets count;
 #     once there are that many, anything older than the oldest kept set
@@ -31,7 +35,8 @@
 #   backup.sh --tag NAME   # extra set outside retention (pre-deploy)
 #   backup.sh --status     # what is held; exits non-zero unless the newest
 #                          # complete daily set verifies and is fresh, and the
-#                          # last daily and tagged runs succeeded
+#                          # last daily and tagged runs succeeded (none was
+#                          # interrupted; a live run shows as RUNNING)
 #
 # RESTORE
 #   cd ~/backups/hovedbok/daily && sha256sum -c hovedbok-YYYYMMDD-HHMMSS.sha256
@@ -104,8 +109,17 @@ incomplete_bases() { # dir — published artifacts that belong to no complete se
     done | sort -u
 }
 
+running_markers() { # dir — RUNNING.<base> markers of runs that have not ended
+  [ -d "$1" ] || return 0
+  find "$1" -maxdepth 1 -type f -name 'RUNNING.hovedbok-*' | sort
+}
+
+alive() { # pid
+  [[ "$1" =~ ^[0-9]+$ ]] && { kill -0 "$1" 2>/dev/null || [ -d "/proc/$1" ]; }
+}
+
 status() {
-  local rc=0 d b sets incomplete newest newest_base age
+  local rc=0 d b m sets incomplete newest newest_base age
   for d in daily monthly tagged; do
     [ -d "$DEST/$d" ] || continue
     sets="$(complete_sets "$DEST/$d" | wc -l)"
@@ -117,6 +131,13 @@ status() {
     if [ -f "$DEST/$d/FAILED" ]; then
       echo "FAILED: last $d run: $(cat "$DEST/$d/FAILED")"; rc=1
     fi
+    while read -r m; do
+      if alive "$(cat "$m")"; then
+        echo "RUNNING: ${m##*/RUNNING.} (pid $(cat "$m"))"
+      else
+        echo "INTERRUPTED: ${m##*/RUNNING.} died without finishing (pid $(cat "$m") is gone)"; rc=1
+      fi
+    done < <(running_markers "$DEST/$d")
   done
   [ -d "$DEST/daily" ] && newest="$(complete_sets "$DEST/daily" | tail -1)"
   if [ -z "${newest:-}" ]; then
@@ -184,19 +205,30 @@ complete=""
 finish() {
   local rc=$?
   set +e
-  rm -f "${temps[@]}"
+  rm -f ${temps[@]+"${temps[@]}"}
   if [ "$rc" -eq 0 ]; then
     rm -f "$out/FAILED"
+    # Runs killed before this one are superseded by it, as FAILED is.
+    running_markers "$out" | while read -r m; do
+      [ "$m" = "$out/RUNNING.$base" ] || alive "$(cat "$m")" || rm -f "$m"
+    done
   else
-    [ -n "$complete" ] || rm -f "${published[@]}"
+    [ -n "$complete" ] || rm -f ${published[@]+"${published[@]}"}
     printf '%s %s exit %s\n' "$(date +%Y-%m-%dT%H:%M:%S%z)" "$base" "$rc" 2>/dev/null > "$out/FAILED"
     echo "FAILED $base (exit $rc)" >&2
   fi
+  rm -f "$out/RUNNING.$base"
   exit "$rc"
 }
 trap finish EXIT
+# A signal ends the run as a failure (bash runs the trap once the foreground
+# command returns), never as a success.
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 mkdir -p "$out"
+echo "$$" > "$out/RUNNING.$base"
 if [ -e "$out/$base.sha256" ]; then
   echo "$out/$base.sha256 already exists" >&2; exit 1
 fi

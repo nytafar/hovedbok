@@ -206,6 +206,14 @@ deploy/backup.sh --status   # non-zero unless the newest complete set (dump +
                             # documents) verifies, is fresh, and the last run succeeded
 ```
 
+A backup set is a dump, a documents archive and the `.sha256` manifest that
+makes them complete; a run that fails or is interrupted publishes nothing and
+leaves `--status` red until a later run succeeds. Sets taken before the
+manifest existed (before #18) never count as complete, so right after deploying
+this version `--status` reports `NO COMPLETE DAILY SET` until the first new run:
+run `deploy/backup.sh` once by hand. The old sets stay until `DAILY_KEEP`
+complete ones have replaced them.
+
 Enable Banking stays unset until the owner has registered an application
 (`ENABLE_BANKING_APP_ID`, `ENABLE_BANKING_KEY_FILE` → a PEM under
 `./secrets/`, mounted at `/secrets`); the bank routes answer 503 meanwhile.

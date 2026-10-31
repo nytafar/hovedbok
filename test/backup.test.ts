@@ -27,6 +27,10 @@ case "$*" in
       ok) cat "$t"; rm -f "$t" ;;
       truncated) head -c "$(( $(stat -c %s "$t") / 2 ))" "$t"; rm -f "$t"; exit 23 ;;
       truncated-exit-0) head -c "$(( $(stat -c %s "$t") / 2 ))" "$t"; rm -f "$t" ;;
+      held) # stays in the archive step until the test creates $STUB_RELEASE
+        echo "$$" > "$STUB_HELD"
+        while [ ! -e "$STUB_RELEASE" ]; do sleep 0.02; done
+        cat "$t"; rm -f "$t" ;;
       *) echo "docker stub: bad STUB_TAR=$STUB_TAR" >&2; exit 98 ;;
     esac ;;
   *) echo "docker stub: unexpected call: $*" >&2; exit 99 ;;
@@ -65,20 +69,28 @@ afterEach(async () => {
 
 type Run = { code: number; out: string };
 
-function backup(args: string[], opts: { stamp?: string; tar?: string; env?: Record<string, string> } = {}): Run {
+type Opts = { stamp?: string; tar?: string; env?: Record<string, string> };
+
+function stubEnv(opts: Opts): Record<string, string> {
+  return {
+    PATH: `${join(tmp, "bin")}:${process.env.PATH}`,
+    HOME: join(tmp, "home"),
+    HOVEDBOK_DIR: join(tmp, "stack"),
+    HOVEDBOK_BACKUP_DEST: dest,
+    COMPOSE_PROJECT_NAME: "hovedbok-test",
+    STUB_LOG: join(tmp, "docker.log"),
+    STUB_DOCS: docs,
+    STUB_STAMP: opts.stamp ?? "20261015-020000",
+    STUB_TAR: opts.tar ?? "ok",
+    STUB_HELD: join(tmp, "held.pid"),
+    STUB_RELEASE: join(tmp, "release"),
+    ...opts.env,
+  };
+}
+
+function backup(args: string[], opts: Opts = {}): Run {
   const p = Bun.spawnSync(["bash", SCRIPT, ...args], {
-    env: {
-      PATH: `${join(tmp, "bin")}:${process.env.PATH}`,
-      HOME: join(tmp, "home"),
-      HOVEDBOK_DIR: join(tmp, "stack"),
-      HOVEDBOK_BACKUP_DEST: dest,
-      COMPOSE_PROJECT_NAME: "hovedbok-test",
-      STUB_LOG: join(tmp, "docker.log"),
-      STUB_DOCS: docs,
-      STUB_STAMP: opts.stamp ?? "20261015-020000",
-      STUB_TAR: opts.tar ?? "ok",
-      ...opts.env,
-    },
+    env: stubEnv(opts),
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -288,5 +300,90 @@ describe("retention counts complete sets only", () => {
     expect(await ls("monthly")).toEqual(set("hovedbok-20261101-020000"));
     await expectRestorable("monthly", "hovedbok-20261101-020000");
     expect(status().out).toContain("monthly    1 complete sets, 0 incomplete");
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe("an interrupted run never leaves status green", () => {
+  const prior = "hovedbok-20261014-020000";
+  const base = "hovedbok-20261015-020000";
+
+  /** Starts a run held in its archive step; resolves once it is there. */
+  async function heldRun() {
+    const proc = Bun.spawn(["bash", SCRIPT], { env: stubEnv({ tar: "held" }), stdout: "pipe", stderr: "pipe" });
+    const held = join(tmp, "held.pid");
+    for (let i = 0; !(await Bun.file(held).exists()) || (await readFile(held, "utf8")) === ""; i++) {
+      if (i > 500) throw new Error("the run never reached its archive step");
+      await Bun.sleep(10);
+    }
+    const stub = Number((await readFile(held, "utf8")).trim());
+    return { proc, stub, release: () => writeFile(join(tmp, "release"), "") };
+  }
+
+  test("while it runs, status shows it and stays green", async () => {
+    expect(backup([], { stamp: "20261014-020000" }).code).toBe(0);
+    const run = await heldRun();
+    try {
+      const s = status();
+      expect(s.out).toContain(`RUNNING: ${base} (pid ${run.proc.pid})`);
+      expect(s.code).toBe(0);
+    } finally {
+      await run.release();
+    }
+    expect(await run.proc.exited).toBe(0);
+    expect(await ls("daily")).toEqual([...set(prior), ...set(base)]);
+    expect(status().code).toBe(0);
+  });
+
+  test("SIGTERM to the script alone is a failure, even if the step it waited on succeeds", async () => {
+    expect(backup([], { stamp: "20261014-020000" }).code).toBe(0);
+    const run = await heldRun();
+    run.proc.kill("SIGTERM");
+    await run.release();
+    expect(await run.proc.exited).toBe(143);
+    expect(await ls("daily")).toEqual(["FAILED", ...set(prior)]);
+    const s = status();
+    expect(s.out).toContain(`FAILED: last daily run: `);
+    expect(s.out).toContain(`${base} exit 143`);
+    expect(s.code).not.toBe(0);
+  });
+
+  test("SIGTERM to script and child together (systemd stopping the unit) is a failure", async () => {
+    expect(backup([], { stamp: "20261014-020000" }).code).toBe(0);
+    const run = await heldRun();
+    try {
+      process.kill(run.stub, "SIGTERM");
+      run.proc.kill("SIGTERM");
+      expect(await run.proc.exited).toBe(143);
+    } finally {
+      await run.release();
+    }
+    expect(await ls("daily")).toEqual(["FAILED", ...set(prior)]);
+    expect(status().code).not.toBe(0);
+  });
+
+  test("SIGKILL (no trap runs) leaves a RUNNING marker that fails status until a good run", async () => {
+    expect(backup([], { stamp: "20261014-020000" }).code).toBe(0);
+    const run = await heldRun();
+    run.proc.kill("SIGKILL");
+    await run.proc.exited;
+    await run.release();
+    for (let i = 0; i < 500 && (await Bun.file(`/proc/${run.stub}/stat`).exists()); i++) await Bun.sleep(10);
+    expect(await ls("daily")).toContain(`RUNNING.${base}`);
+    const s = status();
+    expect(s.out).toContain(`INTERRUPTED: ${base}`);
+    expect(s.code).not.toBe(0);
+
+    expect(backup([], { stamp: "20261016-020000" }).code).toBe(0);
+    expect(await ls("daily")).not.toContain(`RUNNING.${base}`);
+    expect(status().code).toBe(0);
+  });
+
+  test("a run refused before any work (its set already exists) still records failure", async () => {
+    expect(backup([]).code).toBe(0);
+    const r = backup([]);
+    expect(r.out).toContain("already exists");
+    expect(r.code).toBe(1);
+    expect(await ls("daily")).toEqual(["FAILED", ...set(base)]);
   });
 });
